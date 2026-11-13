@@ -8,7 +8,6 @@ import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
 import timezoneCatalog from "../pocketbase/pb_hooks/timezones.json" with { type: "json" };
-import { fromZonedInput, zonedInput } from "../src/lib/domain.ts";
 
 test(
     "Income, recurring transactions and custom schedules",
@@ -280,7 +279,7 @@ test(
             const circleSeed = await api(`${path}/expenses`, account.token, fields, "POST", 201);
             await api(`/api/collections/preferences/records/${config.preferences.id}`, account.token, { timezone: "UTC", time_format: "12h" }, "PATCH");
             const originalSchedule = (row) => Object.fromEntries(["occurred_at", "recurrence_anchor", "recurrence_next", "recurrence_timezone"].map((key) => [key, row[key]]));
-            const preserved = (row) => fromZonedInput(zonedInput(row.occurred_at, "UTC"), "UTC", row.occurred_at);
+            const preserved = (row) => new Date(row.occurred_at.replace(" ", "T")).toISOString();
             const edited = await api(`${personal}/${seed.id}`, account.token, { notes: "Updated note", occurred_at: preserved(seed) }, "PATCH");
             const sharedEdit = await api(`${path}/expenses/${circleSeed.id}`, account.token, { ...fields, notes: "Updated shared note", occurred_at: preserved(circleSeed), version: circleSeed.version }, "PATCH");
             assert.deepEqual(originalSchedule(edited), originalSchedule(seed));

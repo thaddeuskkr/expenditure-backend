@@ -138,7 +138,7 @@ routerAdd("POST", "/test/push/rollback-record/{collection}/{id}", (e) => {
     const tokens = ["aa", "bb", "cc", "dd", "ee"].map((prefix) => prefix.repeat(32));
     async function register(person, i, override = {}) {
         return api(`/api/expenditure/push/devices/${installations[i]}`, person.token,
-            { token: tokens[i], environment: "sandbox", server: base, circle_expenses: true, circle_invitations: true, repayments: true, shortcut_expenses: false, api_expenses: false, ...override }, "PUT");
+            { token: tokens[i], environment: "sandbox", server: base, circle_expenses: true, circle_invitations: true, repayments: true, shortcut_expenses: false, ...override }, "PUT");
     }
 
     const list = async (collection) => (await api(`/api/collections/${collection}/records?perPage=100`, admin)).items;
@@ -187,24 +187,6 @@ routerAdd("POST", "/test/push/rollback-record/{collection}/{id}", (e) => {
     assert.deepEqual(deliveries.map((row) => row.token).sort(), [tokens[1], tokens[2]].sort());
     assert.equal(deliveries[0].payload.aps["thread-id"], circle.id);
 
-    // Replays must not create another outbox item (uses the real API-key path).
-    const key = await api("/api/expenditure/keys", alice.token, { name: "Push test", scopes: ["expenses:write"], expires_at: "" }, "POST", 201);
-    const keyToken = key.key;
-    assert.equal(typeof keyToken, "string");
-    const apiBody = { title: "Imported coffee", amount: 650, currency: "SGD" };
-    async function imported() {
-        const res = await fetch(`${base}/api/expenses/circles/${circle.id}/transactions`, { method: "POST", headers: { "X-API-Key": keyToken, "Content-Type": "application/json", "Idempotency-Key": "push-import" }, body: JSON.stringify(apiBody) });
-        const data = await res.json();
-        assert.ok(res.ok, JSON.stringify(data));
-        return data;
-    }
-
-    await imported();
-    const count = (await list("push_deliveries")).length;
-    await imported();
-    assert.equal((await list("push_deliveries")).length, count, "Idempotent API replay never enqueues");
-    await run();
-
     await expense({ title: "Retry me" });
     responseMode = "retry";
     await run();
@@ -238,7 +220,7 @@ routerAdd("POST", "/test/push/rollback-record/{collection}/{id}", (e) => {
 
     async function preferences(person, i, overrides = {}) {
         return api(`/api/expenditure/push/devices/${installations[i]}`, person.token,
-            { circle_expenses: true, circle_invitations: true, repayments: true, shortcut_expenses: false, api_expenses: false, ...overrides }, "PATCH", 204);
+            { circle_expenses: true, circle_invitations: true, repayments: true, shortcut_expenses: false, ...overrides }, "PATCH", 204);
     }
 
     await t.test("invitation alerts match verified recipients and cancel on replacement, revocation, expiry, acceptance and opt-out", async () => {
@@ -370,12 +352,12 @@ routerAdd("POST", "/test/push/rollback-record/{collection}/{id}", (e) => {
         assert.equal(deliveries.length, sent, "Inactive participants are rechecked before repayment delivery");
         assert.equal((await list("push_deliveries")).length, 0);
     });
-    await t.test("own Shortcut and API alerts are opt-in, isolated and not repeated by edits, retries, moves or schedules", async () => {
+    await t.test("own Shortcut alerts are opt-in, isolated and not repeated by edits, moves or schedules", async () => {
         const config = await api("/api/expenditure/config", alice.token);
         const personalCategory = config.categories.find((row) => row.active).id;
         const main = await api(`${root}/${circle.id}`, alice.token);
         const circleCategory = main.categories.find((row) => row.active).id;
-        const automationJobs = async () => (await list("push_deliveries")).filter((job) => ["shortcut_expense", "api_expense"].includes(job.payload.type));
+        const automationJobs = async () => (await list("push_deliveries")).filter((job) => job.payload.type === "shortcut_expense");
         async function shortcut(path, body) {
             const response = await fetch(base + path, { method: "POST", headers: { Authorization: alice.token,
                 "Content-Type": "application/json", "X-Expenditure-Source": "shortcut" }, body: JSON.stringify(body) });
@@ -405,28 +387,6 @@ routerAdd("POST", "/test/push/rollback-record/{collection}/{id}", (e) => {
         assert.deepEqual(deliveries.at(-1).payload.aps.alert, { title: "Trust Link Card", body: "Spent SGD 10.00 at McDonald's" });
         await shortcut("/api/collections/expenses/records", { ...personalBody, kind: "income", category: config.categories.find((row) => row.kind === "income").id });
         assert.equal((await automationJobs()).length, 0, "Income does not trigger expense alerts");
-        async function apiExpense(path, body, retryKey) {
-            const response = await fetch(base + path, { method: "POST", headers: { "X-API-Key": keyToken, "Content-Type": "application/json",
-                "Idempotency-Key": retryKey }, body: JSON.stringify(body) });
-            const result = await response.json();
-            assert.ok(response.ok, JSON.stringify(result));
-            return result;
-        }
-
-        const importBody = { merchant: "API lunch", amount: 1250, currency: "SGD", payment_method: "Trust Link Card" };
-        await apiExpense("/api/expenses/transactions", importBody, "disabled-own-api");
-        assert.equal((await automationJobs()).length, 0, "Shortcut and API choices are independent");
-        await preferences(alice, 0, { api_expenses: true });
-        const imported = await apiExpense("/api/expenses/transactions", importBody, "own-api");
-        await apiExpense("/api/expenses/transactions", importBody, "own-api");
-        jobs = await automationJobs();
-        assert.equal(jobs.length, 1, "API retry replays never create a second alert");
-        assert.equal(jobs[0].payload.type, "api_expense");
-        assert.equal(jobs[0].personal_expense, imported.id);
-        assert.equal(jobs[0].payload.aps.alert.body, "Spent SGD 12.50 at API lunch on Trust Link Card");
-        await preferences(alice, 0);
-        assert.equal((await automationJobs()).length, 0, "Turning API alerts off cancels queued alerts");
-        await preferences(alice, 0, { shortcut_expenses: true, api_expenses: true });
         const circleBody = { title: "Shortcut Circle entry", amount: 900, currency: "SGD", category: circleCategory,
             paid_by: main.me, split_mode: "even", shares: [{ member: main.me }] };
         const shared = await shortcut(`${root}/${circle.id}/expenses`, circleBody);
@@ -442,18 +402,11 @@ routerAdd("POST", "/test/push/rollback-record/{collection}/{id}", (e) => {
         assert.equal(otherMemberAlert.payload.aps.alert.title, "Push trip");
         assert.equal(otherMemberAlert.payload.aps.alert.body, "Alice spent SGD 9.00 at Shortcut Circle entry");
         await run();
-        await api(`/api/collections/preferences/records/${config.preferences.id}`, alice.token, { default_api_circle: circle.id }, "PATCH");
-        const routed = await apiExpense("/api/expenses/transactions", importBody, "own-routed-api");
-        await apiExpense("/api/expenses/transactions", importBody, "own-routed-api");
-        jobs = await automationJobs();
-        assert.equal(jobs.length, 1);
-        assert.equal(jobs[0].expense, routed.id, "Default API Circle routing notifies the key owner once");
-        await run();
         const toMove = await shortcut("/api/collections/expenses/records", personalBody);
         await run();
         const moved = await api(`${root}/${circle.id}/expenses/move`, alice.token,
             { expense: toMove.id, previous_updated: toMove.updated, category: circleCategory });
-        assert.equal((await automationJobs()).length, 0, "Moving an existing expense is not a new Shortcut/API call");
+        assert.equal((await automationJobs()).length, 0, "Moving an existing expense is not a new Shortcut call");
         assert.equal(moved.source, "shortcut");
         assert.equal(moved._skip_automation_notification, undefined);
         await api(`${root}/${circle.id}/expenses/${moved.id}/move-to-personal`, alice.token, { version: moved.version });
@@ -477,7 +430,7 @@ routerAdd("POST", "/test/push/rollback-record/{collection}/{id}", (e) => {
         const body = () => ({ token: current.token, environment: current.environment, server: base, request_id: randomUUID() });
         const reset = () => api(`/test/push/reset-cooldown/${alice.id}`, admin, {});
         await api(`/api/expenditure/push/devices/${current.installation}`, alice.token,
-            { circle_expenses: false, circle_invitations: false, repayments: false, shortcut_expenses: false, api_expenses: false }, "PATCH", 204);
+            { circle_expenses: false, circle_invitations: false, repayments: false, shortcut_expenses: false }, "PATCH", 204);
         const beforeDevices = await list("push_devices"), beforeJobs = await list("push_deliveries");
         const beforeRequests = deliveries.length;
         await api(path, null, body(), "POST", 401);

@@ -1,6 +1,6 @@
 # Circle push relay
 
-Run this as a separate Docker service from PocketBase. It sends backend 41’s Circle activity and optional Shortcut/API expense alerts through APNs. No npm packages or database are needed.
+Run this as a separate Docker service from PocketBase. It sends Circle activity and optional Shortcut expense alerts through APNs. No npm packages or database are needed.
 
 ## Apple key
 
@@ -62,7 +62,7 @@ For **PocketBase running directly on the same host**, use `EXPENDITURE_PUSH_RELA
 
 ## Verify delivery
 
-Install the updated app, sign in and allow notifications. Settings → Notifications has separate Circle and automation choices, applied with Save/Discard. Shortcut/API alerts start off and notify the account that added the expense. Test with two accounts on an APNs-capable device while the recipient app is closed. Delivery runs every minute and retries temporary failures for up to 24 hours. The health check proves the relay can load its configuration and serve authenticated requests; it does not verify Apple credentials or real APNs delivery.
+Install the updated app, sign in and allow notifications. Settings → Notifications has separate Circle and automation choices, applied with Save/Discard. Shortcut alerts start off and notify the account that added the expense. Test with two accounts on an APNs-capable device while the recipient app is closed. Delivery runs every minute and retries temporary failures for up to 24 hours. The health check proves the relay can load its configuration and serve authenticated requests; it does not verify Apple credentials or real APNs delivery.
 
 After changing key or secret file contents, restart the relay with `docker compose restart push-relay`. See the [backend installation guide](../README.md) for PocketBase upgrades.
 

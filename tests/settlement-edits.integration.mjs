@@ -38,11 +38,11 @@ test("Recorded repayment edits preserve permissions, ledger balances and recalcu
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -123,8 +123,6 @@ test("Recorded repayment edits preserve permissions, ledger balances and recalcu
         await update(g, record, { amount: 300 }, outsider.token, 404);
         const other = await group();
         await api(`${other.path}/settlements/${record.id}`, { token: owner.token, method: "PATCH", body: input(record), expected: 404 });
-        const key = await api("/api/expenditure/keys", { token: member.token, body: { name: "No settlement access", scopes: ["expenses:write"], expires_at: "" }, expected: 201 });
-        await api(`${g.path}/settlements/${record.id}`, { key: key.key, method: "PATCH", body: input(record), expected: 401 });
         await api(`${g.path}/settlements/${record.id}`, { method: "PATCH", body: input(record), expected: 401 });
         for (const version of [undefined, "1", 0, record.version + 1]) await update(g, record, { version }, member.token, 409);
         const owned = await update(g, record, { amount: 250 }, owner.token);

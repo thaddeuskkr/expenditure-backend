@@ -44,11 +44,11 @@ test("Circle member permissions cover each action and every creation path", { ti
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -99,7 +99,6 @@ test("Circle member permissions cover each action and every creation path", { ti
     const edit = (g, entry, actor = member, expected = 200) => api(`${g.path}/expenses/${entry.id}`, { token: actor.token, method: "PATCH", body: { ...fields(g, { category: entry.category, kind: entry.kind, title: "Changed" }), version: entry.version }, expected });
     const remove = (g, entry, actor = member, expected = 200) => api(`${g.path}/expenses/${entry.id}`, { token: actor.token, method: "DELETE", body: { version: entry.version }, expected });
     const move = (g, entry, actor = member, expected = 200) => api(`${g.path}/expenses/${entry.id}/move-to-personal`, { token: actor.token, body: { version: entry.version }, expected });
-    const key = (actor = member) => api("/api/expenditure/keys", { token: actor.token, body: { name: "Permission test", scopes: ["expenses:write"], expires_at: "" }, expected: 201 });
     await t.test("new members keep own-entry defaults and owners receive full effective access", async () => {
         const g = await group();
         for (const actor of [member, other]) {
@@ -216,27 +215,6 @@ test("Circle member permissions cover each action and every creation path", { ti
         await permission(g, { move_scope: "all" });
         await move(g, entry);
     });
-    await t.test("API imports and default destinations require Add; accepted retries still replay after revocation", async () => {
-        const g = await group(), credential = await key();
-        const body = { title: "Imported", amount: 650 }, idempotency = "permissions-import";
-        async function imported(input, expected, path = `/api/expenses/circles/${g.circle.id}/transactions`, retryKey = idempotency) {
-            const response = await fetch(base + path, { method: "POST", headers: { "X-API-Key": credential.key, "Idempotency-Key": retryKey, "Content-Type": "application/json" }, body: JSON.stringify(input) });
-            const result = await response.json();
-            assert.equal(response.status, expected, JSON.stringify(result));
-            return result;
-        }
-
-        const accepted = await imported(body, 201);
-        await permission(g, { can_add: false });
-        assert.equal((await imported(body, 200)).id, accepted.id);
-        await imported(body, 403, undefined, "new-blocked");
-        const config = await api("/api/expenditure/config", { token: member.token });
-        await api(`/api/collections/preferences/records/${config.preferences.id}`, { token: member.token, method: "PATCH", body: { default_api_circle: g.circle.id } });
-        await imported({ merchant: "Default blocked", amount: 650 }, 403, "/api/expenses/transactions", "default-blocked");
-        assert.equal((await imported({ merchant: "Imported", amount: 650 }, 200, "/api/expenses/transactions")).id, accepted.id);
-        await permission(g, { can_add: true });
-        await imported(body, 201, undefined, "new-blocked");
-    });
     await t.test("moving personal entries into a Circle requires Add without blocking confirmed retries", async () => {
         const g = await group();
         const personal = await api("/api/collections/expenses/records", { token: member.token, body: { user: member.id, kind: "expense", merchant: "Personal", amount: 650, currency: "SGD", category: "Other", occurred_at: "2091-01-01T00:00:00Z" } });
@@ -304,8 +282,6 @@ test("Circle member permissions cover each action and every creation path", { ti
         await create(g, member, { kind: "income" });
         await remove(g, await edit(g, seed));
         await remove(g, created);
-        const credential = await key();
-        await api(`/api/expenses/circles/${g.circle.id}/transactions`, { key: credential.key, body: { title: "Admin import", amount: 650 }, expected: 201 });
     });
     await t.test("Admins manage other members and permissions while the owner, ownership and Circle deletion remain protected", async () => {
         const g = await group();
@@ -346,8 +322,6 @@ test("Circle member permissions cover each action and every creation path", { ti
         await api(g.path, { token: member.token, method: "PATCH", body: { name: "Denied", version: d.circle.version }, expected: 403 });
         await api(`${g.path}/categories`, { token: member.token, body: { name: "Denied", color: "#123456" }, expected: 403 });
         await api(`${g.path}/invitations`, { token: member.token, body: { email: outsider.email }, expected: 403 });
-        const adminKey = await key();
-        await api(`/api/expenses/circles/${g.circle.id}/transactions`, { key: adminKey.key, body: { title: "Denied", amount: 650 }, expected: 403 });
     });
     await t.test("Owners and Admins have full Move access; demotion restores the saved scope", async () => {
         const g = await group();

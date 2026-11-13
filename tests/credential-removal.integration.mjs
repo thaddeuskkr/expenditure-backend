@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { createServer } from "node:net";
 
-test("upgrade removes retired credentials and routes while preserving passwords, OIDC, API keys and account data", { timeout: 30000 }, async (t) => {
+test("upgrade removes retired credentials and routes and relabels imports without rewriting ledger history", { timeout: 30000 }, async (t) => {
     const binary = process.env.POCKETBASE_BINARY;
     assert.ok(binary, "Set POCKETBASE_BINARY to PocketBase 0.40.6.");
     const directory = await mkdtemp(join(tmpdir(), "expenditure-credential-removal-"));
@@ -86,8 +86,8 @@ test("upgrade removes retired credentials and routes while preserving passwords,
     await api("/api/collections/users", admin, { oauth2: { enabled: true, providers: [{ name: "oidc", clientId: "local-client", clientSecret: "local-secret", authURL: "https://issuer.invalid/authorize", tokenURL: "https://issuer.invalid/token", userInfoURL: "https://issuer.invalid/userinfo" }] } }, "PATCH");
     const schemaBefore = await api("/api/collections/users", admin);
     const key = "exp_" + randomBytes(24).toString("hex");
-    const apiKeyBefore = await create("api_keys", { user: user.id, name: "Existing automation", key_hash: createHash("sha256").update(key).digest("hex"), key_prefix: key.slice(0, 12), scopes: ["expenses:read"] });
-    const expense = await create("expenses", { user: user.id, kind: "expense", source: "manual", merchant: "Existing purchase", amount: 1250, currency: "SGD", category: category.id, occurred_at: "2026-11-04T00:00:00Z", payment_method: "Visa", notes: "Preserve me" });
+    const apiKeyBefore = await create("api_keys", { user: user.id, name: "Existing automation", key_hash: createHash("sha256").update(key).digest("hex"), key_prefix: key.slice(0, 12), scopes: ["expenses:read", "expenses:write"] });
+    const expense = await create("expenses", { user: user.id, kind: "expense", source: "api", merchant: "Existing purchase", amount: 1250, currency: "SGD", category: category.id, occurred_at: "2026-11-04T00:00:00Z", payment_method: "Visa", notes: "Preserve me" });
     const circle = await create("circles", { owner: user.id, name: "Preserved ledger", currency: "SGD", icon: "home", version: 1 });
     const member = await create("circle_members", { circle: circle.id, user: user.id, name: user.name, active: true, can_add: true, edit_scope: "own", delete_scope: "own", move_scope: "payer", version: 1 });
     const sharedCategory = await create("circle_categories", { circle: circle.id, name: "Other", color: "#a59aaa", active: true });
@@ -104,7 +104,6 @@ test("upgrade removes retired credentials and routes while preserving passwords,
     const migrate = spawnSync(binary, ["migrate", "up", ...flags, `--migrationsDir=${resolve("pocketbase/pb_migrations")}`], { encoding: "utf8" });
     assert.equal(migrate.status, 0, migrate.stdout + migrate.stderr);
     await start(resolve("pocketbase/pb_migrations"));
-    assert.equal((await api("/api/expenditure/status")).version, 45);
     const auth = await api("/api/collections/users/auth-with-password", null, { identity: user.email, password });
     await api("/api/collections/login_keys", admin, undefined, "GET", 404);
     await api("/api/collections/login_keys/records", admin, undefined, "GET", 404);
@@ -117,11 +116,11 @@ test("upgrade removes retired credentials and routes while preserving passwords,
     const ledger = await api(`/api/expenditure/circles/${circle.id}`, auth.token);
     for (const before of [shared, oldImport]) {
         const after = ledger.expenses.items.find((entry) => entry.id === before.id);
-        for (const [field, value] of Object.entries(before)) assert.deepEqual(after[field], value);
+        for (const [field, value] of Object.entries(before)) assert.deepEqual(after[field], field === "source" && value === "api" ? "shortcut" : value);
     }
     for (const name of ["expenses", "circle_expenses"]) {
         const schema = await api(`/api/collections/${name}`, admin);
-        assert.deepEqual(schema.fields.find((field) => field.name === "source").values, ["manual", "api", "shortcut"]);
+        assert.deepEqual(schema.fields.find((field) => field.name === "source").values, ["manual", "shortcut"]);
     }
 
     const schemaAfter = await api("/api/collections/users", admin);
@@ -129,13 +128,43 @@ test("upgrade removes retired credentials and routes while preserving passwords,
     const passwordAuth = await api("/api/collections/users/auth-with-password", null, { identity: user.email, password });
     assert.equal(passwordAuth.record.id, user.id);
     const config = await api("/api/expenditure/config", passwordAuth.token);
-    assert.deepEqual(config.preferences, { ...preferencesBefore, shortcut_payment_methods: [], strip_wallet_merchant_location: false });
+    const { default_api_circle: retired, ...preferences } = preferencesBefore;
+    assert.deepEqual(config.preferences, { ...preferences, shortcut_payment_methods: [], strip_wallet_merchant_location: false });
     assert.deepEqual(config.categories.find((row) => row.kind === "expense"), { ...category, kind: "expense" });
-    assert.deepEqual(await api(`/api/collections/expenses/records/${expense.id}`, passwordAuth.token), expense);
-    assert.deepEqual(await api(`/api/collections/api_keys/records/${apiKeyBefore.id}`, admin), apiKeyBefore);
-    const response = await fetch(base + "/api/expenses/transactions", { headers: { "X-API-Key": key } });
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).items[0].id, expense.id);
+    assert.deepEqual(await api(`/api/collections/expenses/records/${expense.id}`, passwordAuth.token), { ...expense, source: "shortcut" });
+    for (const name of ["api_keys", "api_transaction_retries"]) {
+        await api(`/api/collections/${name}`, admin, undefined, "GET", 404);
+        await api(`/api/collections/${name}/records`, admin, undefined, "GET", 404);
+    }
+
+    assert.equal(config.preferences.default_api_circle, undefined);
+    await api("/api/expenditure/status", null, undefined, "GET", 401);
+    await api("/api/expenditure/config", key, undefined, "GET", 401);
+    assert.equal((await api("/api/expenditure/status", passwordAuth.token)).version, 46);
+    for (const [method, path] of [
+        ["GET", "/api/expenditure/keys"],
+        ["POST", "/api/expenditure/keys"],
+        ["DELETE", `/api/expenditure/keys/${apiKeyBefore.id}`],
+        ["GET", "/api/expenses/transactions"],
+        ["POST", "/api/expenses/transactions"],
+        ["GET", "/api/expenses/categories"],
+        ["POST", `/api/expenses/circles/${circle.id}/transactions`],
+        ["GET", `/api/expenses/circles/${circle.id}/categories`],
+    ]) {
+        for (const authHeaders of [{ "X-API-Key": key }, { Authorization: passwordAuth.token }]) {
+            const response = await fetch(base + path, { method, headers: authHeaders });
+            assert.equal(response.status, 404, `${method} ${path}`);
+        }
+    }
+
+    const shortcut = await fetch(base + "/api/collections/expenses/records", {
+        method: "POST",
+        headers: { Authorization: passwordAuth.token, "X-Expenditure-Source": "shortcut", "Content-Type": "application/json" },
+        body: JSON.stringify({ user: user.id, kind: "income", merchant: "New Shortcut income", amount: 500,
+            currency: "SGD", occurred_at: "2026-11-05T00:00:00Z", category: config.categories.find((row) => row.kind === "income").id }),
+    });
+    assert.equal(shortcut.status, 200);
+    assert.equal((await shortcut.json()).source, "shortcut");
     const databaseCheck = spawnSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert not c.execute(\"SELECT name FROM sqlite_master WHERE name LIKE '%login_keys%'\").fetchall()", join(data, "data.db")], { encoding: "utf8" });
     assert.equal(databaseCheck.status, 0, databaseCheck.stderr);
     await stop();

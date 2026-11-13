@@ -72,7 +72,7 @@ function initialize(app, user) {
     app.runInTransaction((tx) => {
         if (tx.countRecords("preferences", $dbx.hashExp({ user })) === 0) {
             const record = new Record(tx.findCollectionByNameOrId("preferences"));
-            record.load({ theme: require(`${__hooks}/theme-core.cjs`).normalizeTheme({ preset: "mauve", colors: require(`${__hooks}/theme-presets.json`)[0].colors }), user, currency: "SGD", timezone: "Asia/Singapore", currencies: defaults, payment_methods: [], default_tab: "Overview", time_format: "24h", show_circle_transactions: false, include_circle_in_budgets: true, default_api_circle: "", default_entry_currency: "", default_expense_category: "", default_income_category: "" });
+            record.load({ theme: require(`${__hooks}/theme-core.cjs`).normalizeTheme({ preset: "mauve", colors: require(`${__hooks}/theme-presets.json`)[0].colors }), user, currency: "SGD", timezone: "Asia/Singapore", currencies: defaults, payment_methods: [], default_tab: "Overview", time_format: "24h", show_circle_transactions: false, include_circle_in_budgets: true, default_entry_currency: "", default_expense_category: "", default_income_category: "" });
             tx.save(record);
         }
 
@@ -93,12 +93,6 @@ function category(app, user, id, allowArchived, kind = "expense") {
     if (!match || (!match.active && !allowArchived))
         throw new BadRequestError("Choose an active category from your account.");
     return match.id;
-}
-
-function categoryByName(app, user, name) {
-    const match = categories(app, user, "expense").find((item) => item.name.toLowerCase() === name.toLowerCase());
-    if (!match || !match.active) throw new BadRequestError("Choose an active category from your account.");
-    return match;
 }
 
 function projectCategory(app, record) {
@@ -167,15 +161,6 @@ function validate(record, app) {
             throw new BadRequestError("Payment method names must be unique.");
         record.set("payment_methods", cleaned);
         require(`${__hooks}/shortcut-payments.js`).validate(record, cleaned);
-        const circle = record.getString("default_api_circle");
-        if (circle && (record.isNew() || circle !== record.original().getString("default_api_circle"))) {
-            try {
-                require(`${__hooks}/circles-service.js`).access(app, circle, user);
-            } catch {
-                throw new BadRequestError("Choose a Circle you currently belong to as your default API workspace.");
-            }
-        }
-
         const selected = record.getStringSlice("currencies");
         if (!selected.length) throw new BadRequestError("Enable at least one currency.");
         if (selected.indexOf(code) < 0)
@@ -249,7 +234,6 @@ module.exports = {
     initialize,
     category,
     categoryKind,
-    categoryByName,
     projectCategory,
     deletePersonalContents,
     personalCategoryMapper,

@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 
 test(
-    "upgrade preserves existing amounts, categories, budgets, preferences and API keys",
+    "upgrade preserves existing amounts, categories, budgets, preferences and transactions from the retired API",
     { timeout: 30000 },
     async (t) => {
         const binary = process.env.POCKETBASE_BINARY;
@@ -154,7 +154,7 @@ test(
             currency: "SGD",
             timezone: "Asia/Singapore",
         });
-        const key = await request("/api/collections/api_keys/records", admin, {
+        await request("/api/collections/api_keys/records", admin, {
             user: user.id,
             name: "Existing key",
             key_hash: "existing-secret-hash",
@@ -268,7 +268,7 @@ test(
         assert.equal(after.card, undefined);
         assert.equal(after.expand.category.name, "Food & drinks");
         assert.equal(after.currency, "SGD");
-        assert.equal(after.source, "api");
+        assert.equal(after.source, "shortcut");
         const preserved = await request(
             `/api/collections/budgets/records/${budget.id}`,
             admin,
@@ -285,18 +285,6 @@ test(
                 .timezone,
             "Asia/Singapore",
         );
-        assert.equal(
-            (await request(`/api/collections/api_keys/records/${key.id}`, admin))
-                .key_prefix,
-            "exp_existing",
-        );
-        const stored = await request(`/api/collections/api_transaction_retries/records?filter=${encodeURIComponent("key = 'preserved-idempotency'")}`, admin);
-        assert.equal(stored.totalItems, 1);
-        assert.equal(stored.items[0].transaction, expense.id);
-        assert.deepEqual(stored.items[0].request, {
-            merchant: "Existing coffee", amount: 850, currency: "SGD", category: "Food & drinks",
-            payment_method: "Stored Visa", notes: "", occurred_at: after.occurred_at,
-        });
         const auth = await request(
             "/api/collections/users/auth-with-password",
             null,
@@ -314,22 +302,6 @@ test(
             }
         }
 
-        const automation = await request("/api/expenditure/keys", auth.token, {
-            name: "Migration replay check", scopes: ["expenses:write"], expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
-        });
-        const replayResponse = await fetch(base + "/api/expenses/transactions", {
-            method: "POST",
-            headers: { "X-API-Key": automation.key, "Idempotency-Key": "preserved-idempotency", "Content-Type": "application/json" },
-            body: JSON.stringify({
-                merchant: "Existing coffee", amount: 850, currency: "SGD", category: "Food & drinks",
-                payment_method: "Stored Visa", occurred_at: "2026-10-26T00:00:00Z",
-            }),
-        });
-        const replay = await replayResponse.json();
-        assert.equal(replayResponse.status, 200, JSON.stringify(replay));
-        assert.equal(replay.id, expense.id);
-        assert.equal(replay.replay, true);
-        assert.equal(replay.idempotency_data, undefined);
         const expenseSchema = await request("/api/collections/expenses", admin);
         assert.ok(!expenseSchema.fields.some((field) => ["idempotency_key", "idempotency_data"].includes(field.name)));
         const detail = await request(`/api/expenditure/circles/${circle.id}`, auth.token);
@@ -366,16 +338,14 @@ test(
         assert.deepEqual(secondAfter.map((category) => category.sort_order), [0, 1]);
         assert.ok(config.categories.some((c) => c.name === "Food & drinks"));
         assert.equal(config.preferences.currency, "SGD");
-        const circleApiResponse = await fetch(`${base}/api/expenses/circles/${circle.id}/transactions`, {
-            method: "POST",
-            headers: { "X-API-Key": automation.key, "Content-Type": "application/json" },
-            body: JSON.stringify({ title: "Added after upgrade", amount: 501, currency: "SGD", occurred_at: "2026-10-27T04:00:00Z" }),
+        const category = detail.categories.find((row) => row.name === "Other" && row.kind === "expense");
+        const shortcutExpense = await request(`/api/expenditure/circles/${circle.id}/expenses`, auth.token, {
+            title: "Added after upgrade", amount: 501, currency: "SGD", occurred_at: "2026-10-27T04:00:00Z",
+            category: category.id, paid_by: members[0].id, split_mode: "percentage",
+            shares: [{ member: members[0].id, percentage_bp: 10000 }],
         });
-        const circleApiExpense = await circleApiResponse.json();
-        assert.equal(circleApiResponse.status, 201, JSON.stringify(circleApiExpense));
-        assert.equal(circleApiExpense.source, "api");
-        assert.equal(circleApiExpense.paid_by, members[0].id);
-        assert.deepEqual(circleApiExpense.shares, [{ member: members[0].id, amount: 501, percentage_bp: 10000 }]);
+        assert.equal(shortcutExpense.paid_by, members[0].id);
+        assert.deepEqual(shortcutExpense.shares, [{ member: members[0].id, amount: 501, percentage_bp: 10000 }]);
         const updatedDetail = await request(`/api/expenditure/circles/${circle.id}`, auth.token);
         assert.deepEqual(updatedDetail.balances, detail.balances);
         for (const original of shared) {

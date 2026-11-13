@@ -8,7 +8,7 @@ import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-test("Category relations, name-based Shortcuts and canonical retry receipts", { timeout: 60000 }, async (t) => {
+test("Category relations and ledger moves", { timeout: 60000 }, async (t) => {
     const binary = process.env.POCKETBASE_BINARY;
     assert.ok(binary, "Set POCKETBASE_BINARY to a PocketBase 0.40.6 executable.");
     const directory = await mkdtemp(join(tmpdir(), "expenditure-category-relations-"));
@@ -38,10 +38,10 @@ test("Category relations, name-based Shortcuts and canonical retry receipts", { 
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, headers = {}, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, body, headers = {}, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         const response = await fetch(base + path, {
             method,
-            headers: { ...headers, ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...headers, ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -78,10 +78,7 @@ test("Category relations, name-based Shortcuts and canonical retry receipts", { 
     const shared = await detail();
     const circleFood = shared.categories.find((row) => row.name === "Food & drinks");
     const personalPath = "/api/collections/expenses/records";
-    const personalInput = { user: owner.id, merchant: "Website entry", amount: 650, currency: "SGD", category: food.id, occurred_at: "2026-10-29T04:05:06Z" };
-    const credentials = await api("/api/expenditure/keys", { token: owner.token, body: { name: "iPhone Shortcut", scopes: ["expenses:read", "expenses:write"], expires_at: "" }, expected: 201 });
-    const shortcut = { merchant: "Shortcut coffee", amount: 650, currency: "SGD", category: "Food & drinks", payment_method: "Apple Pay", notes: "From iPhone" };
-    const send = (body = shortcut, headers = {}, expected = 201) => api("/api/expenses/transactions", { key: credentials.key, body, headers, expected });
+    const personalInput = { user: owner.id, merchant: "App entry", amount: 650, currency: "SGD", category: food.id, occurred_at: "2026-10-29T04:05:06Z" };
     await t.test("stored categories are scoped relations, budgets allow Overall without a fake category, and duplicate retry fields are gone", async () => {
         for (const table of ["expenses", "budgets", "circle_expenses"]) {
             const schema = await api(`/api/collections/${table}`, { token: admin });
@@ -100,30 +97,11 @@ test("Category relations, name-based Shortcuts and canonical retry receipts", { 
         await api("/api/collections/budgets/records", { token: owner.token, body: { ...budget, category: "Overall" }, expected: 400 });
         await api("/api/collections/budgets/records", { token: owner.token, body: { ...budget, category: food.id } });
     });
-    await t.test("website writes require owned IDs while existing Shortcuts keep their category-name payloads", async () => {
+    await t.test("session writes require owned category IDs", async () => {
         await api(personalPath, { token: owner.token, body: { ...personalInput, category: food.name }, expected: 400 });
         await api(personalPath, { token: owner.token, body: { ...personalInput, category: (await config(other)).categories[0].id }, expected: 400 });
         const personal = await api(personalPath, { token: owner.token, body: personalInput });
         assert.equal(personal.category, food.id);
-        const imported = await send();
-        assert.equal(imported.category, food.id);
-        assert.equal(imported.expand.category.name, food.name);
-        assert.equal(imported.payment_method, shortcut.payment_method);
-        const normalized = await send({ ...shortcut, category: "  food & DRINKS  " });
-        assert.equal(normalized.category, food.id);
-        await send({ ...shortcut, category: "Missing category" }, {}, 400);
-        const defaults = await send({ merchant: "Defaults", amount: 300 });
-        assert.equal(defaults.expand.category.name, "Other");
-    });
-    await t.test("both general and explicit Circle automation endpoints resolve category names in their destination", async () => {
-        await api(`/api/collections/preferences/records/${initial.preferences.id}`, { token: owner.token, method: "PATCH", body: { default_api_circle: circle.id } });
-        const imported = await send();
-        assert.equal(imported.category, circleFood.id);
-        assert.notEqual(imported.category, food.id);
-        assert.equal(imported.expand.category.name, food.name);
-        const explicit = await api(`/api/expenses/circles/${circle.id}/transactions`, { key: credentials.key, body: { title: "Circle Shortcut", amount: 650, category: food.name }, expected: 201 });
-        assert.equal(explicit.category, circleFood.id);
-        await api(`/api/collections/preferences/records/${initial.preferences.id}`, { token: owner.token, method: "PATCH", body: { default_api_circle: "" } });
     });
     await t.test("category renames preserve ledger timestamps and Circle versions, and open editors can still save", async () => {
         const personal = await api(personalPath + "?expand=category", { token: owner.token, body: personalInput });
@@ -144,24 +122,6 @@ test("Category relations, name-based Shortcuts and canonical retry receipts", { 
         assert.equal(edited.version, entry.version + 1);
         assert.equal(edited.category, circleFood.id);
         await api(`${circlePath}/expenses/${entry.id}`, { token: owner.token, method: "DELETE", body: { version: edited.version } });
-    });
-    await t.test("immutable retry names survive renames/archiving with a single protected snapshot", async () => {
-        const payload = { ...shortcut, category: "Meals" }, headers = { "Idempotency-Key": "single-snapshot" };
-        const first = await send(payload, headers);
-        const rows = await api(`/api/collections/api_transaction_retries/records?filter=key='single-snapshot'`, { token: admin });
-        assert.equal(rows.totalItems, 1);
-        const receipt = rows.items[0];
-        assert.equal(receipt.request.category, "Meals");
-        assert.equal(first.category, food.id);
-        await api(`/api/expenditure/categories/${food.id}`, { token: owner.token, method: "PATCH", body: { name: "Archived meals", active: false } });
-        const replay = await send(payload, headers, 200);
-        assert.equal(replay.id, first.id);
-        assert.equal(replay.expand.category.name, "Archived meals");
-        assert.equal((await api(`/api/collections/api_transaction_retries/records/${receipt.id}`, { token: admin })).request.category, "Meals");
-        await send({ ...payload, category: "Archived meals" }, headers, 409);
-        await api(`/api/collections/api_transaction_retries/records/${receipt.id}`, { token: owner.token, method: "PATCH", body: { request: {} }, expected: 403 });
-        await api(`${personalPath}/${first.id}`, { token: owner.token, method: "DELETE", expected: 204 });
-        await send(payload, headers, 410);
     });
     await t.test("ledger moves carry category IDs across scopes while matching display names", async () => {
         const personal = await api(personalPath, { token: owner.token, body: { ...personalInput, category: groceries.id } });

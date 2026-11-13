@@ -6,13 +6,13 @@ function installation(e) {
 }
 
 function preference(type) {
-    return { circle_expense: "circle_expenses", circle_invitation: "circle_invitations", circle_repayment: "repayments", shortcut_expense: "shortcut_expenses", api_expense: "api_expenses" }[type];
+    return { circle_expense: "circle_expenses", circle_invitation: "circle_invitations", circle_repayment: "repayments", shortcut_expense: "shortcut_expenses" }[type];
 }
 
 function register(e) {
     const id = installation(e), data = e.requestInfo().body;
-    if (!data || Object.keys(data).some((key) => !["token", "environment", "server", "circle_expenses", "circle_invitations", "repayments", "shortcut_expenses", "api_expenses"].includes(key)) ||
-        ["circle_expenses", "circle_invitations", "repayments", "shortcut_expenses", "api_expenses"].some((key) => typeof data[key] !== "boolean") ||
+    if (!data || Object.keys(data).some((key) => !["token", "environment", "server", "circle_expenses", "circle_invitations", "repayments", "shortcut_expenses"].includes(key)) ||
+        ["circle_expenses", "circle_invitations", "repayments", "shortcut_expenses"].some((key) => typeof data[key] !== "boolean") ||
         typeof data.server !== "string" || data.server.length > 2048 || !/^https?:\/\//.test(data.server) ||
         typeof data.token !== "string" || !/^(?:[a-f0-9]{2}){16,256}$/i.test(data.token) ||
         !["sandbox", "production"].includes(data.environment))
@@ -34,7 +34,7 @@ function register(e) {
 
         row.load({ installation: id, user: e.auth.id, token: data.token.toLowerCase(), environment: data.environment, server: data.server,
             circle_expenses: data.circle_expenses, circle_invitations: data.circle_invitations, repayments: data.repayments,
-            shortcut_expenses: data.shortcut_expenses, api_expenses: data.api_expenses });
+            shortcut_expenses: data.shortcut_expenses });
         app.save(row);
         removeDisabled(app, row);
     });
@@ -60,9 +60,9 @@ function removeDisabled(app, device) {
 
 function savePreferences(e) {
     const id = installation(e), data = e.requestInfo().body;
-    const keys = ["circle_expenses", "circle_invitations", "repayments", "shortcut_expenses", "api_expenses"];
+    const keys = ["circle_expenses", "circle_invitations", "repayments", "shortcut_expenses"];
     if (!data || Object.keys(data).some((key) => !keys.includes(key)) || keys.some((key) => typeof data[key] !== "boolean"))
-        throw new BadRequestError("Send the five notification choices as booleans.");
+        throw new BadRequestError("Send all notification choices as booleans.");
     e.app.runInTransaction((app) => {
         for (const device of app.findRecordsByFilter("push_devices", "installation = {:id} && user = {:user}", "", 0, 0, { id, user: e.auth.id })) {
             device.load(data);
@@ -202,7 +202,7 @@ function enqueueExpense(app, expense) {
     enqueueAutomation(app, expense, circle, author);
 }
 
-// Server-generated copies keep provenance, but are not new Shortcut/API calls.
+// Server-generated copies keep provenance, but are not new Shortcut calls.
 // Custom record metadata is never stored or included in public exports.
 function skipAutomation(record) {
     record.set("_skip_automation_notification", true);
@@ -211,16 +211,16 @@ function skipAutomation(record) {
 
 function enqueueAutomation(app, record, circle, member) {
     const source = record.getString("source");
-    if (record.getString("kind") !== "expense" || record.getBool("_skip_automation_notification") || !["shortcut", "api"].includes(source)) return;
+    if (record.getString("kind") !== "expense" || record.getBool("_skip_automation_notification") || source !== "shortcut") return;
     const user = circle ? member.getString("user") : record.getString("user");
     if (!user || (circle && !member.getBool("active"))) return;
     const title = circle ? record.getString("title") : record.getString("merchant");
     const payment = record.getString("payment_method").trim();
-    const body = `Spent ${money(record)} at ${title}${source === "api" && payment ? ` on ${payment}` : ""}`;
-    const notificationTitle = source === "shortcut" && payment ? payment : undefined;
+    const body = `Spent ${money(record)} at ${title}`;
+    const notificationTitle = payment || undefined;
     for (const device of devicesFor(app, user))
         queue(app, device, circle, circle ? "expense" : "personal_expense", record, member, {
-            type: source === "shortcut" ? "shortcut_expense" : "api_expense", expense: record.id, occurred_at: record.getString("occurred_at"),
+            type: "shortcut_expense", expense: record.id, occurred_at: record.getString("occurred_at"),
         }, body, notificationTitle);
 }
 
@@ -238,10 +238,10 @@ function eligible(app, job, device, payload) {
             !app.countRecords("circle_members", $dbx.hashExp({ circle: payload.circle, user: user.id, active: true }));
     }
 
-    if (["shortcut_expense", "api_expense"].includes(payload.type)) {
+    if (payload.type === "shortcut_expense") {
         const personal = job.getString("personal_expense");
         const record = app.findRecordById(personal ? "expenses" : "circle_expenses", personal || job.getString("expense"));
-        if (record.id !== payload.expense || record.getString("kind") !== "expense" || record.getString("source") !== (payload.type === "shortcut_expense" ? "shortcut" : "api")) return false;
+        if (record.id !== payload.expense || record.getString("kind") !== "expense" || record.getString("source") !== "shortcut") return false;
         if (personal) return !payload.circle && record.getString("user") === payload.user && !record.getString("moved_to");
         if (record.getString("created_by") !== job.getString("member")) return false;
     }
@@ -256,7 +256,7 @@ function eligible(app, job, device, payload) {
             [payload.from_member, payload.to_member].includes(member.id);
     }
 
-    return ["circle_expense", "shortcut_expense", "api_expense"].includes(payload.type) && job.getString("expense") === payload.expense;
+    return ["circle_expense", "shortcut_expense"].includes(payload.type) && job.getString("expense") === payload.expense;
 }
 
 function deliver(app) {

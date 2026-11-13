@@ -82,7 +82,7 @@ test("Push relay authenticates and bounds requests without exposing APNs credent
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { result: "sent" });
     const additional = [];
-    for (const type of ["circle_invitation", "circle_repayment", "shortcut_expense", "api_expense", "apns_test"]) {
+    for (const type of ["circle_invitation", "circle_repayment", "shortcut_expense", "apns_test"]) {
         const notification = { ...data, payload: { ...data.payload, type } };
         assert.equal((await request(notification)).status, 200);
         additional.push(notification);

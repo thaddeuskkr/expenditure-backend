@@ -38,11 +38,11 @@ test("The optional combined transaction feed preserves allocation, filtering and
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -121,8 +121,6 @@ test("The optional combined transaction feed preserves allocation, filtering and
         assert.equal((await feed(g.member)).totalItems, 1);
         assert.deepEqual({ ...await report(g.member), rates_fetched_at: before.rates_fetched_at }, before);
         await api(`/api/expenditure/transactions?${new URLSearchParams(range)}`, { expected: 401 });
-        const key = await api("/api/expenditure/keys", { token: g.member.token, body: { name: "Not a session", scopes: ["expenses:read"], expires_at: "" }, expected: 201 });
-        await api(`/api/expenditure/transactions?${new URLSearchParams(range)}`, { key: key.key, expected: 401 });
     });
     await t.test("one globally ordered and paginated list includes only positive own shares, including income", async () => {
         const g = await group();

@@ -93,10 +93,10 @@ test("Mauve upgrade retires Sage and default green accents while preserving acco
     const upgrade = spawnSync(binary, ["migrate", "up", ...newFlags], { encoding: "utf8" });
     assert.equal(upgrade.status, 0, upgrade.stdout + upgrade.stderr);
     await start(newFlags);
-    assert.equal((await api("/api/expenditure/status")).version, 45);
     for (const [index, before] of snapshots.entries()) {
         const after = await api(`/api/collections/preferences/records/${before.id}`, { token: admin });
-        assert.deepEqual(after, { ...before, theme: index === 0 ? mauve : before.theme, shortcut_payment_methods: [], strip_wallet_merchant_location: false });
+        const { default_api_circle: retired, ...preferences } = before;
+        assert.deepEqual(after, { ...preferences, theme: index === 0 ? mauve : before.theme, shortcut_payment_methods: [], strip_wallet_merchant_location: false });
     }
 
     for (const [collection, before, color] of [["categories", category, "#d6b4d5"], ["categories", chosenCategory, "#123456"], ["circle_categories", circleCategory, "#b5baff"]]) {

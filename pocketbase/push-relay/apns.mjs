@@ -126,7 +126,7 @@ export function createRelay({ secret, send }) {
             const data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
             if (!/^[a-z0-9]{15}$/.test(data.id) || typeof data.token !== "string" ||
                 !/^(?:[a-f0-9]{2}){16,256}$/.test(data.token) || !["sandbox", "production"].includes(data.environment) ||
-                !["circle_expense", "circle_invitation", "circle_repayment", "shortcut_expense", "api_expense", "apns_test"].includes(data.payload?.type) || !data.payload.aps?.alert ||
+                !["circle_expense", "circle_invitation", "circle_repayment", "shortcut_expense", "apns_test"].includes(data.payload?.type) || !data.payload.aps?.alert ||
                 Buffer.byteLength(JSON.stringify(data.payload)) > 4096) {
                 reply(400, { error: "Invalid notification" });
                 return;

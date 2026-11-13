@@ -1,23 +1,5 @@
-# Expenditure
+# Expenditure backend
 
-An income and expense tracker with recurring income and expenses, custom categories, budgets, multiple currencies, shared Circle ledgers, and Excel/CSV exports.
+Self-hosted PocketBase backend for Expenditure on iOS and its Apple Shortcuts actions.
 
-[Open Expenditure](https://expenditure.tkkr.dev)
-
-## Development
-
-Requires Node.js 22.18+ and pnpm.
-
-```sh
-pnpm install
-cp .env.example .env.local
-pnpm dev
-```
-
-Open [localhost:3000](http://localhost:3000). Set `NEXT_PUBLIC_POCKETBASE_URL` in `.env.local` to your PocketBase instance.
-
-## Deployment
-
-Install the [PocketBase files](pocketbase/README.md), then deploy the Next.js app to Vercel with `NEXT_PUBLIC_POCKETBASE_URL` set. Redeploy after changing this value.
-
-Run `pnpm validate` to check changes.
+Follow the [PocketBase setup instructions](pocketbase/README.md) to install or upgrade the backend. See the [push relay setup](pocketbase/push-relay/README.md) to enable activity notifications.

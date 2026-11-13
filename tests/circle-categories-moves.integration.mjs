@@ -24,12 +24,6 @@ test(
         await writeFile(join(hooks, "test.pb.js"), `routerAdd("POST", "/api/test/recurrence", (e) => {
             require(__hooks + "/recurrence.js").run(e.app, e.requestInfo().body.now);
             return e.json(200, {});
-        }, $apis.requireAuth("_superusers"));
-        routerAdd("POST", "/api/test/age", (e) => {
-            const data = e.requestInfo().body;
-            e.app.db().newQuery("UPDATE expenses SET created = {:created} WHERE id = {:id}").bind(data).execute();
-            e.app.db().newQuery('UPDATE api_transaction_retries SET created = {:created} WHERE "transaction" = {:id}').bind(data).execute();
-            return e.json(200, {});
         }, $apis.requireAuth("_superusers"));`);
         const flags = [
             `--dir=${directory}`,
@@ -270,38 +264,6 @@ test(
             assert.equal(entries.length, 3);
             assert.ok(entries.every((row) => row.category === shared.category && row.shares[0].member === bobMember));
             assert.equal(entries.filter((row) => row.recurrence).length, 1);
-        });
-        await t.test("API retry markers survive a move, Circle entry deletion and expiry", async () => {
-            const key = await api("/api/expenditure/keys", bob.token, { name: "Move check", scopes: ["expenses:read", "expenses:write"], expires_at: "" }, "POST", 201);
-            const body = { merchant: "API move", amount: 350, currency: "SGD", category: "Other", occurred_at: personalData.occurred_at };
-            async function automation(payload, expected, idempotency = "move-once") {
-                const response = await fetch(base + "/api/expenses/transactions", { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": key.key, "Idempotency-Key": idempotency }, body: JSON.stringify(payload) });
-                const data = await response.json();
-                assert.equal(response.status, expected, JSON.stringify(data));
-                return data;
-            }
-
-            const original = await automation(body, 201);
-            const result = await api(`${root}/${circle.id}/expenses/move`, bob.token, { expense: original.id, previous_updated: original.updated, category: await activeCategory() });
-            assert.equal(result.source, "api");
-            const retry = await automation(body, 200);
-            assert.equal(retry.id, original.id);
-            assert.equal(retry.replay, true);
-            assert.equal(retry.moved_to, result.id);
-            await automation({ ...body, amount: 351 }, 409);
-            const read = await fetch(base + "/api/expenses/transactions?perPage=100", { headers: { "X-API-Key": key.key } }).then((response) => response.json());
-            assert.ok(!read.items.some((row) => row.id === original.id));
-            await api(`${root}/${circle.id}/expenses/${result.id}`, bob.token, { version: result.version }, "DELETE");
-            await api(`${root}/${circle.id}/expenses/move`, bob.token, { expense: original.id, previous_updated: original.updated, category: result.category }, "POST", 409);
-            assert.equal((await automation(body, 200)).id, original.id);
-            await api("/api/test/age", admin, { id: original.id, created: new Date(Date.now() - 25 * 3600000).toISOString().replace("T", " ") });
-            assert.notEqual((await automation(body, 201)).id, original.id);
-            const separate = await api(root, bob.token, { name: "Delete transfer test", icon: "users", currency: "SGD" }, "POST", 201);
-            const next = await automation(body, 201, "deleted-circle");
-            await api(`${root}/${separate.id}/expenses/move`, bob.token, { expense: next.id, previous_updated: next.updated, category: "Other" });
-            await api(`${root}/${separate.id}`, bob.token, { confirmation: separate.name, version: separate.version }, "DELETE");
-            await api(`${personal}/${next.id}`, bob.token, undefined, "GET", 404);
-            assert.equal((await automation(body, 200, "deleted-circle")).id, next.id);
         });
         await t.test("revoked membership blocks moves and category changes", async () => {
             const own = await api(personal, bob.token, personalData);

@@ -32,12 +32,6 @@ function select(app, circle, value, expense, kind = "expense") {
     return category.id;
 }
 
-function byName(app, circle, name) {
-    const category = list(app, circle, "expense").find((item) => item.name.toLowerCase() === name.toLowerCase());
-    if (!category || !category.active) throw new BadRequestError("Choose an active category from this circle.");
-    return category;
-}
-
 function body(e, allowed) {
     const data = e.requestInfo().body;
     if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).some((key) => allowed.indexOf(key) < 0))
@@ -156,4 +150,4 @@ function copy(e) {
     });
 }
 
-module.exports = { list, initialize, select, byName, create, update, reorder, copy };
+module.exports = { list, initialize, select, create, update, reorder, copy };

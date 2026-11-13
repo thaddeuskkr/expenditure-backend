@@ -48,11 +48,11 @@ test("Circle transactions move atomically into an authorized personal ledger", {
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -109,8 +109,6 @@ test("Circle transactions move atomically into an authorized personal ledger", {
         await move(g, expense, { token: undefined, expected: 401 });
         await move(g, expense, { token: member.token, expected: 403 });
         await move(g, expense, { token: outsider.token, expected: 404 });
-        const key = await api("/api/expenditure/keys", { token: payer.token, body: { name: "Cannot move", scopes: ["expenses:write"], expires_at: "" }, expected: 201 });
-        await move(g, expense, { token: undefined, key: key.key, expected: 401 });
         for (const field of ["user", "paid_by", "amount", "currency", "shares", "source"])
             await move(g, expense, { body: { version: expense.version, [field]: "spoof" }, expected: 400 });
         await move(g, expense, { body: { version: expense.version + 1 }, expected: 409 });
@@ -271,30 +269,21 @@ test("Circle transactions move atomically into an authorized personal ledger", {
             assert.equal(feed.items.filter((row) => row.id === moved.id).length, account === payer ? 1 : 0);
         }
     });
-    await t.test("personal-to-Circle round trips retain immutable old receipts and API retry destinations", async () => {
+    await t.test("personal-to-Circle round trips retain immutable old move markers", async () => {
         const g = await group();
-        const key = await api("/api/expenditure/keys", { token: payer.token, body: { name: "Round trip", scopes: ["expenses:read", "expenses:write"], expires_at: "" }, expected: 201 });
-        const payload = { merchant: "Round trip purchase", amount: 1234, currency: "SGD", category: "Other" };
-        const headers = { "X-API-Key": key.key, "Content-Type": "application/json", "Idempotency-Key": "roundtrip" };
-        const original = await fetch(base + "/api/expenses/transactions", { method: "POST", headers, body: JSON.stringify(payload) }).then((response) => response.json());
+        const original = await api(personalRoot, { token: payer.token, body: {
+            user: payer.id, merchant: "Round trip purchase", amount: 1234, currency: "SGD",
+            category: "Other", occurred_at: "2026-10-29T04:05:06Z",
+        } });
         const shared = await api(`${g.path}/expenses/move`, { token: payer.token, body: { expense: original.id, previous_updated: original.updated, category: "Other" } });
         const tombstone = await api(`${personalRoot}/${original.id}`, { token: admin });
         const returned = await move(g, shared);
         assert.notEqual(returned.id, original.id);
         assert.deepEqual(await api(`${personalRoot}/${original.id}`, { token: admin }), tombstone);
         await api(`${personalRoot}/${original.id}`, { token: payer.token, method: "PATCH", body: { moved_to: "" }, expected: 404 });
-        const replay = await fetch(base + "/api/expenses/transactions", { method: "POST", headers, body: JSON.stringify(payload) });
-        assert.equal(replay.status, 200);
-        assert.equal((await replay.json()).id, original.id);
         const again = await api(`${g.path}/expenses/move`, { token: payer.token, body: { expense: returned.id, previous_updated: returned.updated, category: "Other" } });
         await move(g, shared, { expected: 404 });
         await move(g, again);
-        const directPayload = { title: "Circle API purchase", amount: 650 };
-        const directHeaders = { ...headers, "Idempotency-Key": "circle-roundtrip" };
-        const direct = await fetch(base + `/api/expenses/circles/${g.circle.id}/transactions`, { method: "POST", headers: directHeaders, body: JSON.stringify(directPayload) }).then((response) => response.json());
-        await move(g, direct);
-        const blocked = await fetch(base + `/api/expenses/circles/${g.circle.id}/transactions`, { method: "POST", headers: directHeaders, body: JSON.stringify(directPayload) });
-        assert.equal(blocked.status, 410);
         assert.equal((await detail(g)).expenses.totalItems, 0);
     });
 });

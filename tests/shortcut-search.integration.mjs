@@ -42,7 +42,7 @@ test("Circle search and Shortcut sources preserve pagination, provenance and iso
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...headers, ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...headers, ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -92,9 +92,6 @@ test("Circle search and Shortcut sources preserve pagination, provenance and iso
     assert.equal((await api(`/api/collections/expenses/records/${manual.id}`, { token: owner.token, headers: marker, method: "PATCH", body: { notes: "Header cannot rewrite provenance" } })).source, "manual");
     shared = await api(`${path}/expenses/${shared.id}`, { token: owner.token, method: "PATCH", body: { ...input, version: shared.version } });
     assert.equal(shared.source, "shortcut");
-    const key = await api("/api/expenditure/keys", { token: owner.token, body: { name: "API source", scopes: ["expenses:read", "expenses:write"], expires_at: "" }, expected: 201 });
-    const imported = await api("/api/expenses/transactions", { key: key.key, headers: marker, body: { merchant: "API import", amount: 100, currency: "SGD", category: "Other", payment_method: "Visa", occurred_at: input.occurred_at }, expected: 201 });
-    assert.equal(imported.source, "api");
     for (let index = 0; index < 29; index++) await api(`${path}/expenses`, { token: owner.token, body: { ...input, title: `Other ${index}`, notes: "", payment_method: "Cash", occurred_at: "2026-11-06T00:00:00Z" }, expected: 201 });
     const before = await api(path, { token: owner.token });
     assert.equal(before.expenses.totalItems, 31);
@@ -156,12 +153,6 @@ test("Circle search and Shortcut sources preserve pagination, provenance and iso
         token: owner.token, headers: marker, body: { ...input, payment_method: "shared     visa" }, expected: 201,
     });
     assert.equal(freshCircle.payment_method, "Everyday Card");
-    const laterImport = await api("/api/expenses/transactions", {
-        key: key.key, headers: marker,
-        body: { merchant: "Another API import", amount: 110, currency: "SGD", category: "Other", payment_method: "Visa", occurred_at: input.occurred_at },
-        expected: 201,
-    });
-    assert.equal(laterImport.payment_method, "Visa");
 
     const member = await api("/api/collections/circle_members/records", {
         token: admin, body: { circle: circle.id, user: stranger.id, name: "Restricted member", active: true, can_add: true, edit_scope: "none", delete_scope: "own", move_scope: "payer", version: 1 },
@@ -195,7 +186,6 @@ test("Circle search and Shortcut sources preserve pagination, provenance and iso
     assert.deepEqual(ledger.totals, baseline.totals);
     assert.equal((await update(owner.token, ["visa", "shared visa"])).updated, 0);
     assert.equal((await read("expenses", manual.id)).payment_method, "Visa");
-    assert.equal((await read("expenses", imported.id)).payment_method, "Visa");
     assert.equal((await read("expenses", personal.id)).payment_method, "Visa", "Moved receipt is untouched");
     assert.equal((await read("circle_expenses", manualCircle.id)).payment_method, "Shared Visa");
     assert.equal((await read("circle_expenses", strangerExpense.id)).payment_method, "Shared Visa");

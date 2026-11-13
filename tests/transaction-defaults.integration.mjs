@@ -39,11 +39,11 @@ test("Personal transaction defaults persist, validate ownership and preserve led
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, headers = {}, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, body, headers = {}, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...headers, ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...headers, ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -208,16 +208,5 @@ test("Personal transaction defaults persist, validate ownership and preserve led
         }
 
         await api(`/api/expenditure/categories/${expenseCategory.id}`, { token: owner.token, method: "PATCH", body: { active: true } });
-    });
-    await t.test("API imports retain their own defaults despite personal form preferences", async () => {
-        await save({ default_entry_currency: "USD", default_expense_category: expenseCategory.id, default_income_category: incomeCategory.id });
-        const key = await api("/api/expenditure/keys", { token: owner.token, body: { name: "Default isolation", scopes: ["expenses:write"], expires_at: "" }, expected: 201 });
-        const imported = await api("/api/expenses/transactions", { key: key.key, body: { merchant: "API defaults", amount: 650 }, expected: 201 });
-        assert.equal(imported.currency, "SGD");
-        assert.equal(imported.expand.category.name, "Other");
-        const circle = await api("/api/expenditure/circles", { token: owner.token, body: { name: "Independent defaults", currency: "EUR" }, expected: 201 });
-        const shared = await api(`/api/expenses/circles/${circle.id}/transactions`, { key: key.key, body: { title: "Circle defaults", amount: 650 }, expected: 201 });
-        assert.equal(shared.currency, "EUR");
-        assert.equal(shared.expand.category.name, "Other");
     });
 });

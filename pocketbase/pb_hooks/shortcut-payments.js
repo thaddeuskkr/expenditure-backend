@@ -2,7 +2,7 @@ const field = "shortcut_payment_methods";
 const maxLinks = 100;
 const preferenceFields = [
     "currency", "timezone", "currencies", "payment_methods", field, "default_tab",
-    "time_format", "show_circle_transactions", "include_circle_in_budgets", "default_api_circle",
+    "time_format", "show_circle_transactions", "include_circle_in_budgets",
     "default_entry_currency", "default_expense_category", "default_income_category", "theme",
     "strip_wallet_merchant_location",
 ];

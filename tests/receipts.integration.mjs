@@ -44,11 +44,11 @@ test("Receipt expenses persist calculations and enforce ledger permissions", { t
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -113,10 +113,8 @@ test("Receipt expenses persist calculations and enforce ledger permissions", { t
         ]) await api(`${g.path}/expenses`, { token: owner.token, body: { ...input, ...changes }, expected: 400 });
         assert.equal((await api(g.path, { token: owner.token })).expenses.totalItems, 2);
     });
-    await t.test("receipt allocations remain session-only and automation rejects receipt fields", async () => {
-        const key = await api("/api/expenditure/keys", { token: owner.token, body: { name: "Receipt scope test", scopes: ["expenses:write"], expires_at: "" }, expected: 201 });
-        await api(`${g.path}/expenses`, { key: key.key, body: input, expected: 401 });
-        await api(`/api/expenses/circles/${g.circle.id}/transactions`, { key: key.key, body: { title: "Dinner", amount: 5995, receipt }, expected: 400 });
+    await t.test("receipt allocations require a signed-in session", async () => {
+        await api(`${g.path}/expenses`, { body: input, expected: 401 });
         await api(`/api/collections/circle_expenses/records`, { token: owner.token, body: { ...input, circle: g.circle.id }, expected: 403 });
     });
     await t.test("only author and owner can edit and concurrent edits use versions", async () => {

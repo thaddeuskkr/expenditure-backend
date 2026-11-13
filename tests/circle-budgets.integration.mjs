@@ -38,11 +38,11 @@ test("Personal monthly spending and budgets include allocated Circle expenses", 
         await rm(directory, { recursive: true, force: true });
     });
     const base = `http://127.0.0.1:${port}`;
-    async function api(path, { token, key, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
+    async function api(path, { token, headers = {}, body, method = body === undefined ? "GET" : "POST", expected = 200 } = {}) {
         ({ path, body } = await resolveCategoryFixture(base, path, body, token));
         const response = await fetch(base + path, {
             method,
-            headers: { ...(token ? { Authorization: token } : {}), ...(key ? { "X-API-Key": key } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: { ...headers, ...(token ? { Authorization: token } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         const content = await response.text();
@@ -217,13 +217,12 @@ test("Personal monthly spending and budgets include allocated Circle expenses", 
         await api(`${g.path}/expenses/${moved.id}`, { token: g.member.token, method: "PATCH", body: editInput(moved, { split_mode: "exact", shares: [{ member: g.ids.member, amount: 500 }, { member: g.ids.owner, amount: 500 }] }) });
         assert.equal((await report(g.member)).total, 500);
         assert.equal((await report(g.owner)).total, 500);
-        const key = await api("/api/expenditure/keys", { token: g.member.token, body: { name: "Budget import", scopes: ["expenses:write"], expires_at: "" }, expected: 201 });
-        let imported = await api(`/api/expenses/circles/${g.circle.id}/transactions`, { key: key.key, body: { title: "API consumption", amount: 600, occurred_at: "2026-10-15T05:00:00Z" }, expected: 201 });
+        let imported = await api(`${g.path}/expenses`, { token: g.member.token, headers: { "X-Expenditure-Source": "shortcut" }, body: { title: "Shortcut purchase", amount: 600, currency: "SGD", category: "Other", paid_by: g.ids.member, split_mode: "exact", shares: [{ member: g.ids.member, amount: 600 }], occurred_at: "2026-10-15T05:00:00Z" }, expected: 201 });
         assert.equal((await report(g.member)).total, 1100);
         imported = await api(`${g.path}/expenses/${imported.id}`, { token: g.member.token, method: "PATCH", body: editInput(imported, { split_mode: "exact", shares: [{ member: g.ids.owner, amount: 600 }] }) });
         assert.equal((await report(g.member)).total, 500);
         assert.equal((await report(g.owner)).total, 1100);
-        assert.equal(imported.source, "api");
+        assert.equal(imported.source, "shortcut");
         await api(`${g.path}/expenses/${imported.id}`, { token: g.member.token, method: "DELETE", body: { version: imported.version } });
         assert.equal((await report(g.owner)).total, 500);
     });

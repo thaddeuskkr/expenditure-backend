@@ -630,41 +630,6 @@ function updateMemberPermissions(e) {
     });
 }
 
-function createApiExpense(e) {
-    return require(`${__hooks}/api-transactions.js`).create(e, e.request.pathValue("id"));
-}
-
-function createApiRecord(app, identity, circleId, fields) {
-    const { circle, member } = access(app, circleId, identity.user.id);
-    requireExpensePermission(circle, member, "add");
-    if (app.countRecords("circle_expenses", $dbx.hashExp({ circle: circle.id })) >= 10000)
-        throw new BadRequestError("This circle has reached its expense limit.");
-    const total = fields.amount;
-    const members = memberRecords(app, circle.id), before = balances(app, circle.id);
-    const expense = new Record(app.findCollectionByNameOrId("circle_expenses"));
-    expense.load({
-        circle: circle.id,
-        title: fields.merchant,
-        kind: "expense",
-        recurrence_weekdays: [],
-        amount: total,
-        currency: fields.currency,
-        category: require(`${__hooks}/circle-categories.js`).byName(app, circle.id, fields.category).id,
-        paid_by: member.id,
-        created_by: member.id,
-        split_mode: "percentage",
-        shares: core.allocate(total, "percentage", [{ member: member.id, percentage_bp: 10000 }]),
-        payment_method: fields.payment_method,
-        notes: fields.notes,
-        occurred_at: fields.occurred_at,
-        source: "api",
-        version: 1,
-    });
-    app.save(expense);
-    preserveFormerBalances(app, circle.id, members, before);
-    return expense;
-}
-
 function saveExpense(e) {
     const data = body(e, [
         "title",
@@ -920,7 +885,6 @@ module.exports = {
     acceptInvitation,
     revokeInvitation,
     removeMember,
-    createApiExpense, createApiRecord,
     saveExpense,
     deleteExpense,
     settle,

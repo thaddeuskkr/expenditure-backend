@@ -16,4 +16,42 @@ function timestamp(value) {
     return new Date(value).toISOString();
 }
 
-module.exports = { timestamp };
+function bounds(query) {
+    const from = query.get("from"),
+        to = query.get("to"),
+        previous = query.get("previous");
+    const fromDate = new Date(from),
+        toDate = new Date(to),
+        previousDate = new Date(previous);
+    if (
+        !from ||
+        !to ||
+        !previous ||
+        !isFinite(fromDate.getTime()) ||
+        !isFinite(toDate.getTime()) ||
+        !isFinite(previousDate.getTime()) ||
+        toDate <= fromDate ||
+        fromDate <= previousDate ||
+        toDate - previousDate > 64 * 86400000
+    )
+        throw new BadRequestError("Provide a valid monthly date range.");
+    const currency = query.get("currency") || "all";
+    if (
+        currency !== "all" &&
+        !require(`${__hooks}/configuration.js`).currency(currency)
+    )
+        throw new BadRequestError("Unsupported currency.");
+    // Match PocketBase's normalized date representation for indexed comparisons.
+    function pbDate(date) {
+        return date.toISOString().replace("T", " ");
+    }
+
+    return {
+        from: pbDate(fromDate),
+        to: pbDate(toDate),
+        previous: pbDate(previousDate),
+        currency,
+    };
+}
+
+module.exports = { timestamp, bounds };
