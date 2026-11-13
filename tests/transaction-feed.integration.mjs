@@ -221,4 +221,66 @@ test("The optional combined transaction feed preserves allocation, filtering and
         assert.equal(result.items.reduce((sum, row) => sum + row.allocated_amount, 0), 500);
         for (const changes of [{ from: "" }, { from: "2026-10-01T00:00:00" }, { to: "2026-09-01T00:00:00Z" }, { to: "2027-10-01T00:00:00Z" }, { currency: "BOGUS" }, { page: "0" }, { page: "1.5" }, { perPage: "101" }, { search: "x".repeat(201) }]) await feed(g.member, changes, 400);
     });
+    await t.test("amount sorting uses displayed shares and currency units before pagination in both ledgers", async () => {
+        const g = await group();
+        const config = await api("/api/expenditure/config", { token: g.member.token });
+        await api(`/api/collections/preferences/records/${config.preferences.id}`, { token: g.member.token, method: "PATCH",
+            body: { show_circle_transactions: true, currencies: ["SGD", "JPY", "KWD"] } });
+        for (let index = 0; index < 27; index++) {
+            const occurred_at = `2026-10-${String(28 - index).padStart(2, "0")}T04:00:00Z`;
+            await personal(g.member, { merchant: `Amount personal ${index}`, amount: (28 - index) * 100, occurred_at });
+            await create(g, { title: `Amount shared ${index}`, amount: (100 + index) * 1000, occurred_at,
+                shares: [{ member: g.ids.member, amount: (index + 1) * 50 }, { member: g.ids.owner, amount: (100 + index) * 1000 - (index + 1) * 50 }] });
+        }
+
+        await personal(g.member, { merchant: "Amount yen", currency: "JPY", amount: 1000 });
+        await personal(g.member, { merchant: "Amount dinar", currency: "KWD", amount: 12345 });
+        await personal(g.member, { merchant: "Amount SGD precision", currency: "SGD", amount: 1234 });
+        const displayed = (row) => (row.allocated_amount ?? row.amount) * ({ JPY: 1000, KWD: 1 }[row.currency] || 10);
+        for (const sort of ["amount_desc", "amount_asc"]) {
+            const all = await feed(g.member, { sort, perPage: "100" });
+            assert.equal(all.totalItems, 57);
+            const values = all.items.map(displayed);
+            assert.deepEqual(values, [...values].sort((a, b) => sort === "amount_desc" ? b - a : a - b));
+            const paged = [];
+            for (let page = 1; page <= Math.ceil(all.totalItems / 7); page++)
+                paged.push(...(await feed(g.member, { sort, perPage: "7", page: String(page) })).items);
+            assert.deepEqual(paged, all.items, "Every page preserves the same complete sorted order and stable ties");
+            const precision = all.items.filter((row) => ["Amount dinar", "Amount SGD precision"].includes(row.merchant));
+            assert.equal(precision[0].merchant, sort === "amount_desc" ? "Amount dinar" : "Amount SGD precision");
+        }
+
+        const high = await feed(g.member, { sort: "amount_desc", perPage: "1" });
+        assert.equal(high.items[0].merchant, "Amount yen", "JPY 1000 sorts above SGD 28 despite its smaller raw minor-unit value");
+        const low = await feed(g.member, { sort: "amount_asc", perPage: "1" });
+        assert.equal(low.items[0].title, "Amount shared 0", "The combined feed sorts the own share, not the much larger Circle total");
+        const filtered = await feed(g.member, { sort: "amount_desc", currency: "SGD", search: "Amount personal", perPage: "1" });
+        assert.equal(filtered.totalItems, 27);
+        assert.equal(filtered.items[0].merchant, "Amount personal 0");
+        await setting(g.member, false);
+        assert.equal((await feed(g.member, { sort: "amount_asc", perPage: "100" })).totalItems, 30);
+        await feed(g.member, { sort: "amount DESC; DROP TABLE expenses" }, 400);
+        const oldest = await feed(g.member, { sort: "date_asc", perPage: "100" });
+        assert.deepEqual(oldest.items.map((row) => row.occurred_at), oldest.items.map((row) => row.occurred_at).sort());
+        const before = await detail(g);
+        for (const sort of ["amount_desc", "amount_asc"]) {
+            const query = { expense_sort: sort, expense_from: range.from, expense_to: range.to, expense_search: "Amount shared", expense_currency: "SGD" };
+            const first = await api(`${g.path}?${new URLSearchParams(query)}`, { token: g.owner.token });
+            const second = await api(`${g.path}?${new URLSearchParams({ ...query, expense_page: "2" })}`, { token: g.owner.token });
+            const items = [...first.expenses.items, ...second.expenses.items];
+            assert.equal(items.length, 27);
+            assert.equal(new Set(items.map((row) => row.id)).size, 27);
+            assert.equal(first.expenses.totalItems, 27);
+            assert.deepEqual(items.map((row) => row.amount), items.map((row) => row.amount).sort((a, b) => sort === "amount_desc" ? b - a : a - b));
+            assert.equal(items[0].title, sort === "amount_desc" ? "Amount shared 26" : "Amount shared 0");
+            assert.deepEqual(first.balances, before.balances);
+            assert.deepEqual(first.totals, before.totals);
+            assert.deepEqual(first.settlements, before.settlements);
+        }
+
+        await api(`${g.path}?expense_sort=unsupported`, { token: g.owner.token, expected: 400 });
+        await api(`${g.path}?expense_sort=amount_desc`, { token: g.other.token });
+        const outside = await user("SortOutside");
+        await api(`${g.path}?expense_sort=amount_desc`, { token: outside.token, expected: 404 });
+    });
 });

@@ -635,7 +635,7 @@ test(
                     token: alice.token,
                 });
                 assert.equal(result.status, 200, JSON.stringify(result.data));
-                assert.equal(result.data.categories.length, 8);
+                assert.equal(result.data.categories.filter((row) => row.kind === "expense").length, 8);
                 assert.equal((await request("/api/expenditure/config")).status, 401);
                 const category = await request("/api/expenditure/categories", {
                     token: alice.token,
@@ -834,8 +834,8 @@ test(
         );
         await t.test("category ordering is private, atomic, persistent and rejects stale changes", async () => {
             const path = "/api/expenditure/categories/reorder";
-            const original = (await request("/api/expenditure/config", { token: alice.token })).data.categories;
-            const other = (await request("/api/expenditure/config", { token: bob.token })).data.categories;
+            const original = (await request("/api/expenditure/config", { token: alice.token })).data.categories.filter((row) => row.kind === "expense");
+            const other = (await request("/api/expenditure/config", { token: bob.token })).data.categories.filter((row) => row.kind === "expense");
             const ids = original.map((category) => category.id);
             const reversed = ids.slice().reverse();
             const body = { ids: reversed, previous_ids: ids };
@@ -853,7 +853,7 @@ test(
                 assert.equal((await request(path, { token: alice.token, method: "POST", body: invalid })).status, 400);
             }
 
-            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories, original);
+            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories.filter((row) => row.kind === "expense"), original);
             const reordered = await request(path, { token: alice.token, method: "POST", body });
             assert.equal(reordered.status, 200, JSON.stringify(reordered.data));
             assert.deepEqual(reordered.data.items.map((category) => category.id), reversed);
@@ -863,8 +863,8 @@ test(
                 assert.deepEqual([category.name, category.color, category.active], [before.name, before.color, before.active]);
             }
 
-            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories.map((category) => category.id), reversed);
-            assert.deepEqual((await request("/api/expenditure/config", { token: bob.token })).data.categories, other);
+            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories.filter((row) => row.kind === "expense").map((category) => category.id), reversed);
+            assert.deepEqual((await request("/api/expenditure/config", { token: bob.token })).data.categories.filter((row) => row.kind === "expense"), other);
             assert.equal((await request(path, { token: alice.token, method: "POST", body })).status, 409);
             assert.equal((await request(`/api/collections/categories/records/${ids[0]}`, {
                 token: alice.token, method: "PATCH", body: { sort_order: 99 },
@@ -882,7 +882,7 @@ test(
             await request(`/api/expenditure/categories/${appended.data.id}`, {
                 token: alice.token, method: "PATCH", body: { name: "Renamed ordered addition", active: false },
             });
-            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories.map((category) => category.id), current);
+            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories.filter((row) => row.kind === "expense").map((category) => category.id), current);
 
             const first = current.slice(), second = current.slice();
             [first[0], first[1]] = [first[1], first[0]];
@@ -892,7 +892,7 @@ test(
             })));
             assert.deepEqual(concurrent.map((result) => result.status).sort(), [200, 409]);
             const winner = concurrent.find((result) => result.status === 200).data.items;
-            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories.map((category) => category.id), winner.map((category) => category.id));
+            assert.deepEqual((await request("/api/expenditure/config", { token: alice.token })).data.categories.filter((row) => row.kind === "expense").map((category) => category.id), winner.map((category) => category.id));
         });
         await t.test(
             "cached online rates convert all currencies and preserve originals",

@@ -333,8 +333,8 @@ test(
         const expenseSchema = await request("/api/collections/expenses", admin);
         assert.ok(!expenseSchema.fields.some((field) => ["idempotency_key", "idempotency_data"].includes(field.name)));
         const detail = await request(`/api/expenditure/circles/${circle.id}`, auth.token);
-        assert.equal(detail.categories.length, 8);
-        assert.deepEqual(detail.categories.map((row) => row.sort_order), [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert.equal(detail.categories.filter((row) => row.kind === "expense").length, 8);
+        assert.deepEqual(detail.categories.filter((row) => row.kind === "expense").map((row) => row.sort_order), [0, 1, 2, 3, 4, 5, 6, 7]);
         for (const original of shared) {
             const migrated = detail.expenses.items.find((item) => item.id === original.id);
             assert.equal(migrated.amount, original.amount_minor);
@@ -358,10 +358,10 @@ test(
             assert.equal(detail.balances.find((row) => row.member === members[1].id && row.currency === currency).net, -net);
         }
 
-        assert.deepEqual(config.categories.map((category) => category.id), previousCategories.map((category) => category.id));
-        assert.deepEqual(config.categories.map((category) => category.sort_order), [0, 1, 2]);
-        assert.deepEqual(config.categories.map((category) => category.active), previousCategories.map((category) => category.active));
-        const secondAfter = await categoryRows(secondUser.id, "sort_order");
+        assert.deepEqual(config.categories.filter((row) => row.kind === "expense").map((category) => category.id), previousCategories.map((category) => category.id));
+        assert.deepEqual(config.categories.filter((row) => row.kind === "expense").map((category) => category.sort_order), [0, 1, 2]);
+        assert.deepEqual(config.categories.filter((row) => row.kind === "expense").map((category) => category.active), previousCategories.map((category) => category.active));
+        const secondAfter = (await categoryRows(secondUser.id, "sort_order")).filter((row) => row.kind === "expense");
         assert.deepEqual(secondAfter.map((category) => category.id), secondPrevious.map((category) => category.id));
         assert.deepEqual(secondAfter.map((category) => category.sort_order), [0, 1]);
         assert.ok(config.categories.some((c) => c.name === "Food & drinks"));

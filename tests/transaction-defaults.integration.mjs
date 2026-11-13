@@ -76,7 +76,7 @@ test("Personal transaction defaults persist, validate ownership and preserve led
     const save = (body, expected = 200) => api(path, { token: owner.token, method: "PATCH", body, expected });
     const categories = initial.categories;
     const expenseCategory = categories.find((category) => category.name === "Food & drinks");
-    const incomeCategory = categories.find((category) => category.name === "Other");
+    const incomeCategory = categories.find((category) => category.kind === "income" && category.name === "Other");
     const outsiderCategory = (await api("/api/expenditure/config", { token: outsider.token })).categories[0];
     const entry = await api("/api/collections/expenses/records", { token: owner.token, body: {
         user: owner.id, merchant: "Existing entry", amount: 650, currency: "SGD", category: "Other", occurred_at: "2026-10-29T04:05:06Z", payment_method: "Cash", notes: "Preserved",
@@ -141,6 +141,15 @@ test("Personal transaction defaults persist, validate ownership and preserve led
         assert.equal(updated.payment_method, "Another import method");
         await api(`/api/collections/expenses/records/${imported.id}`, { token: owner.token, method: "DELETE", expected: 204 });
     });
+    await t.test("transactions and budgets reject a category from the other list", async () => {
+        const token = owner.token;
+        const personal = "/api/collections/expenses/records";
+        const body = { user: owner.id, merchant: "Category check", amount: 100, currency: "SGD", occurred_at: "2026-10-29T04:05:06Z" };
+        await api(personal, { token, body: { ...body, kind: "income", category: expenseCategory.id }, expected: 400 });
+        await api(personal, { token, body: { ...body, kind: "expense", category: incomeCategory.id }, expected: 400 });
+        await api(`${personal}/${entry.id}`, { token, method: "PATCH", body: { kind: "income" }, expected: 400 });
+        await api("/api/collections/budgets/records", { token, body: { user: owner.id, month: "2026-10", amount: 100, currency: "SGD", category: incomeCategory.id }, expected: 400 });
+    });
     await t.test("separate category IDs and an enabled entry currency survive reload", async () => {
         await save({ default_entry_currency: "USD", default_expense_category: expenseCategory.id, default_income_category: incomeCategory.id });
         const preferences = (await config()).preferences;
@@ -164,14 +173,15 @@ test("Personal transaction defaults persist, validate ownership and preserve led
         await api(path, { token: outsider.token, method: "PATCH", body: { default_entry_currency: "EUR" }, expected: 404 });
         assert.equal((await config()).preferences.default_entry_currency, "USD");
     });
-    await t.test("renaming preserves IDs and archiving clears both category defaults atomically", async () => {
+    await t.test("renaming preserves IDs and archiving clears only the matching default", async () => {
         await api(`/api/expenditure/categories/${expenseCategory.id}`, { token: owner.token, method: "PATCH", body: { name: "Meals" } });
         assert.equal((await config()).preferences.default_expense_category, expenseCategory.id);
-        await save({ default_income_category: expenseCategory.id });
+        await save({ default_income_category: expenseCategory.id }, 400);
+        await save({ default_expense_category: incomeCategory.id }, 400);
         await api(`/api/expenditure/categories/${expenseCategory.id}`, { token: owner.token, method: "PATCH", body: { active: false } });
         const preferences = (await config()).preferences;
         assert.equal(preferences.default_expense_category, "");
-        assert.equal(preferences.default_income_category, "");
+        assert.equal(preferences.default_income_category, incomeCategory.id);
         await api(`/api/expenditure/categories/${expenseCategory.id}`, { token: owner.token, method: "PATCH", body: { active: true } });
         assert.equal((await config()).preferences.default_expense_category, "");
         assert.deepEqual(await api(`/api/collections/expenses/records/${entry.id}`, { token: owner.token }), entry);

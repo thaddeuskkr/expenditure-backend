@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, Loader2, MoveUpRight } from "lucide-react";
 import type { AuthProviderInfo } from "pocketbase";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { pb } from "@/lib/pocketbase";
 import { errorMessage } from "@/lib/domain";
 import { Brand } from "./brand";
@@ -12,12 +13,18 @@ export function SignIn() {
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState("");
+    const [passwordEnabled, setPasswordEnabled] = useState(false);
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
     useEffect(() => {
         let active = true;
         pb.collection("users")
             .listAuthMethods()
             .then((methods) => {
-                if (active) setProviders(methods.oauth2.providers);
+                if (active) {
+                    setProviders(methods.oauth2.providers);
+                    setPasswordEnabled(methods.password.enabled);
+                }
             })
             .catch((e) => {
                 if (active) setError(errorMessage(e));
@@ -36,6 +43,21 @@ export function SignIn() {
             .authWithOAuth2({ provider })
             .catch((e) => setError(errorMessage(e)))
             .finally(() => setBusy(""));
+    }
+
+    async function signInWithPassword(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (busy) return;
+        setBusy("password");
+        setError("");
+        try {
+            await pb.collection("users").authWithPassword(email.trim(), password);
+            setPassword("");
+        } catch (e) {
+            setError(errorMessage(e));
+        } finally {
+            setBusy("");
+        }
     }
 
     return (
@@ -98,10 +120,37 @@ export function SignIn() {
                                         </Button>
                                     ))
                                 )}
-                        {!loading && !providers.length && !error && (
-                            <p role="alert" className="text-sm text-destructive">
-                                No sign-in providers are enabled on PocketBase.
-                            </p>
+                        {!loading && passwordEnabled && (
+                            <form className="space-y-3 pt-3" onSubmit={signInWithPassword}>
+                                <label className="field-label" htmlFor="login-email">Email</label>
+                                <Input
+                                    id="login-email"
+                                    type="email"
+                                    autoComplete="username"
+                                    required
+                                    value={email}
+                                    onChange={(event) => setEmail(event.target.value)}
+                                    disabled={!!busy}
+                                />
+                                <label className="field-label" htmlFor="login-password">Password</label>
+                                <Input
+                                    id="login-password"
+                                    type="password"
+                                    autoComplete="current-password"
+                                    required
+                                    value={password}
+                                    onChange={(event) => setPassword(event.target.value)}
+                                    disabled={!!busy}
+                                    autoCapitalize="none"
+                                    spellCheck={false}
+                                />
+                                <Button type="submit" className="h-12 w-full" disabled={!!busy || !email.trim() || !password}>
+                                    {busy === "password" && <Loader2 className="animate-spin" />} Sign in
+                                </Button>
+                            </form>
+                        )}
+                        {!loading && !providers.length && !passwordEnabled && !error && (
+                            <p role="alert" className="text-sm text-destructive">No sign-in methods are enabled on this server.</p>
                         )}
                         {error && (
                             <p

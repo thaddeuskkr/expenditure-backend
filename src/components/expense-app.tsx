@@ -65,6 +65,7 @@ import { UserAvatar } from "./user-avatar";
 import { CategoryIcon } from "./category-icon";
 import { ExpenseEditor } from "./expense-editor";
 import { ExpenseDetails } from "./expense-details";
+import { TransactionSort } from "./transaction-sort";
 import { Transactions } from "./transactions";
 import { CategoryBreakdown } from "./category-breakdown";
 import { EmptyState } from "./empty-state";
@@ -88,7 +89,6 @@ import { categoryLabel,
     EMPTY_RATES,
     type WorkspaceConfig,
     type ExchangeRates,
-    pocketbaseTimestamp,
     zonedDate,
     type Budget,
     type Expense,
@@ -173,8 +173,8 @@ function AccountWorkspace({
         async function load() {
             try {
                 const status = await pb.send<{ version: number }>("/api/expenditure/status", { method: "GET" });
-                if (typeof status.version !== "number" || status.version < 33)
-                    throw new Error("This app requires backend version 33. Install the latest PocketBase migrations and hooks.");
+                if (typeof status.version !== "number" || status.version < 44)
+                    throw new Error("This app requires backend version 44. Install the latest PocketBase migrations and hooks.");
                 const result = await pb.send<WorkspaceConfig>(
                     "/api/expenditure/config",
                     { method: "GET" },
@@ -274,6 +274,7 @@ function Workspace({
     const [search, setSearch] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
     const [category, setCategory] = useState("all");
+    const [transactionSort, setTransactionSort] = useState("date_desc");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [exporting, setExporting] = useState(false);
@@ -296,33 +297,10 @@ function Workspace({
     const categoryOptions = configuration.categories.map((item) => ({ id: item.id, name: item.name }));
     const showCircleTransactions = (section === "Overview" || section === "Transactions") && preferences.show_circle_transactions;
     if (showCircleTransactions && !categoryOptions.some((item) => item.name.trim().toLowerCase() === "other")) categoryOptions.push({ id: "unmapped", name: "Other" });
-    const transactionParams = useMemo(() => new URLSearchParams({ from: range.from, to: range.to, currency: filterCurrency, category, search: debouncedSearch.trim() }), [range, filterCurrency, category, debouncedSearch]);
+    const transactionParams = useMemo(() => new URLSearchParams({ from: range.from, to: range.to, currency: filterCurrency, category, search: debouncedSearch.trim(), sort: section === "Transactions" ? transactionSort : "date_desc" }), [range, filterCurrency, category, debouncedSearch, section, transactionSort]);
     const visibleCurrencies = Array.from(
         new Set([...preferences.currencies, ...configuration.used_currencies]),
     ).sort();
-    const filter = useMemo(() => {
-        let expression = pb.filter(
-            "occurred_at >= {:from} && occurred_at < {:to}",
-            {
-                from: pocketbaseTimestamp(range.from),
-                to: pocketbaseTimestamp(range.to),
-            },
-        );
-        if (filterCurrency !== "all")
-            expression +=
-                " && " +
-                pb.filter("currency = {:currency}", { currency: filterCurrency });
-        if (category !== "all")
-            expression += " && " + pb.filter("category = {:category}", { category });
-        if (debouncedSearch.trim())
-            expression +=
-                " && " +
-                pb.filter(
-                    "(merchant ~ {:query} || notes ~ {:query} || payment_method ~ {:query})",
-                    { query: debouncedSearch.trim() },
-                );
-        return expression;
-    }, [range, filterCurrency, category, debouncedSearch]);
     useEffect(() => {
         const timer = setTimeout(() => {
             setDebouncedSearch(search);
@@ -397,11 +375,7 @@ function Workspace({
                     pb.send<Overview>(`/api/expenditure/overview?${params}`, {
                         method: "GET",
                     }),
-                    showCircleTransactions ?
-                            transactionPage(transactionParams, page) :
-                            pb
-                                .collection<Expense>("expenses")
-                                .getList(page, 15, { filter, sort: "-occurred_at,-created,-id", expand: "category" }),
+                    transactionPage(transactionParams, page),
                     pb.collection<Budget>("budgets").getFullList({
                         expand: "category",
                         filter: pb.filter("month = {:month} && currency = {:currency}", {
@@ -439,7 +413,6 @@ function Workspace({
         debouncedSearch,
         page,
         range,
-        filter,
         revision,
         showCircleTransactions,
         transactionParams,
@@ -525,17 +498,15 @@ function Workspace({
     async function exportExpenses(format: ExportFormat) {
         setExporting(true);
         try {
-            let rows: Transaction[];
-            if (showCircleTransactions) {
-                rows = [];
-                let current = 1, pages = 1;
-                do {
-                    const result = await transactionPage(transactionParams, current, 100);
-                    rows.push(...result.items);
-                    pages = result.totalPages;
-                    current++;
-                } while (current <= pages);
-            } else rows = await pb.collection<Expense>("expenses").getFullList({ filter, sort: "-occurred_at,-created,-id", expand: "category" });
+            const rows: Transaction[] = [];
+            let current = 1, pages = 1;
+            do {
+                const result = await transactionPage(transactionParams, current, 100);
+                rows.push(...result.items);
+                pages = result.totalPages;
+                current++;
+            } while (current <= pages);
+
             await downloadExpenses(rows, {
                 format,
                 month,
@@ -1011,7 +982,15 @@ function Workspace({
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                    <TransactionSort
+                                        value={transactionSort}
+                                        onChange={(value) => {
+                                            setTransactionSort(value);
+                                            setPage(1);
+                                        }}
+                                    />
                                 </div>
+                                {transactionSort.startsWith("amount_") && filterCurrency === "all" && <p className="mb-4 text-xs text-muted-foreground">Amounts in original currencies</p>}
                                 {!error && (
                                     <Transactions
                                         rows={expenses}

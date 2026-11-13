@@ -202,7 +202,7 @@ test("Personal monthly spending and budgets include allocated Circle expenses", 
         summary = await report(g.member);
         assert.equal(summary.categories.find((row) => row.category_name === "Other").total, 1300);
         const after = await api("/api/expenditure/config", { token: g.member.token });
-        assert.ok(!after.categories.some((row) => ["Other", "Circle only", "TRAVEL"].includes(row.name)));
+        assert.ok(!after.categories.some((row) => row.kind === "expense" && ["Other", "Circle only", "TRAVEL"].includes(row.name)));
         assert.equal(after.categories.length, before.categories.length);
         assert.equal((await detail(g)).expenses.items.find((row) => row.amount === 200).expand.category.name, "Circle only");
     });

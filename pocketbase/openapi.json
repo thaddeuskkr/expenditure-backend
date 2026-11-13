@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Expenditure API",
-    "version": "31.0.0",
-    "description": "Personal API keys authorize personal expense automation and self-paid Circle expense creation. API keys with expenses:read can retrieve categories from the default API workspace or an explicitly selected Circle. Circle management, transaction reads and split edits require a normal PocketBase users session in the Authorization header. Ownership, membership, currency precision, splits, and settlements are validated on the server. Requests and stored records use amount (integer currency minor units) and payment_method. Field aliases are not accepted. Income uses positive amounts and kind=income; spending reports and budgets include expenses only. Recurring income and expenses run on the PocketBase server every minute, with custom intervals and monthly dates, catching up after downtime. Schedule edits affect future copies; stopping or deleting the original preserves generated entries."
+    "version": "45.0.0",
+    "description": "Personal API keys authorize personal expense automation and self-paid Circle expense creation. API keys with expenses:read can retrieve categories from the default API workspace or an explicitly selected Circle. Circle management, transaction reads and split edits require a normal PocketBase users session in the Authorization header. Ownership, membership, currency precision, splits, and settlements are validated on the server. Requests and stored records use amount (integer currency minor units) and payment_method. Field aliases are not accepted. Income uses positive amounts and kind=income; each category belongs to either expenses or income. Spending reports and budgets include expenses only. Recurring income and expenses run on the PocketBase server every minute, with custom intervals and monthly dates, catching up after downtime. Schedule edits affect future copies; stopping or deleting the original preserves generated entries. Session-authenticated personal collection creation and Circle expense creation accept X-Expenditure-Source: shortcut to record Shortcut provenance. Omitting the source header creates manual entries. New Shortcuts can also pass X-Expenditure-Wallet-Tap: 1 to apply the account\u2019s opt-in merchant location cleanup. Body source fields cannot set provenance; edits preserve the original source, and API-key imports remain api. Existing manual history is unchanged."
   },
   "servers": [
     {
@@ -342,6 +342,30 @@
               "type": "string",
               "default": "all"
             }
+          },
+          {
+            "in": "query",
+            "name": "expense_search",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Case-insensitive literal substring of title, notes or payment_method. Combined with other expense filters before pagination; summaries, balances and repayments remain all-time."
+          },
+          {
+            "in": "query",
+            "name": "expense_sort",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "date_desc",
+                "date_asc",
+                "amount_desc",
+                "amount_asc"
+              ],
+              "default": "date_desc"
+            },
+            "description": "Applied before pagination after filters. Amount orders compare original currency units (not FX estimates); the Transactions feed uses own allocated Circle shares, while Circle detail uses full amounts. Equal amounts use newest date, created timestamp and ID for stable ties."
           }
         ]
       },
@@ -751,7 +775,31 @@
           "404": {
             "description": "Circle, invitation or record is not accessible"
           }
-        }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Expenditure-Source",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "shortcut"
+              ]
+            },
+            "description": "Optional source marker for session-authenticated Shortcuts creation. The server sets source=shortcut; edits preserve provenance."
+          },
+          {
+            "in": "header",
+            "name": "X-Expenditure-Wallet-Tap",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Marks a Wallet card-tap automation. With the Shortcut source header and account opt-in, recognised location endings are removed from the title."
+          }
+        ]
       }
     },
     "/api/expenditure/circles/{id}/expenses/{expense}": {
@@ -1056,7 +1104,7 @@
     "/api/expenditure/categories/reorder": {
       "post": {
         "summary": "Reorder your categories",
-        "description": "Include all owned category IDs, including archived categories. previous_ids must match the latest order from GET /api/expenditure/config. The update is atomic and never changes names, colors or active status. Normal users session required; personal API keys cannot reorder categories.",
+        "description": "Include all owned category IDs of the selected transaction type, including archived categories. previous_ids must match the latest order for that type from GET /api/expenditure/config. The update is atomic and never changes names, colors or active status. Normal users session required; personal API keys cannot reorder categories.",
         "security": [
           {
             "UserSession": []
@@ -1093,6 +1141,14 @@
                       "type": "string",
                       "pattern": "^[a-z0-9]{15}$"
                     }
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "expense",
+                      "income"
+                    ],
+                    "default": "expense"
                   }
                 }
               }
@@ -1328,6 +1384,176 @@
         }
       }
     },
+    "/api/expenditure/preferences/shortcut-payments": {
+      "patch": {
+        "summary": "Save account preferences and update matching Shortcut transactions",
+        "description": "Atomically saves the authenticated account's preference changes and updates existing transactions whose stored payment_method matches a requested Shortcut name, ignoring case and whitespace. The name must be linked to a saved payment method in the resulting preferences. Applies to personal Shortcut entries, excluding moved receipts, and Circle Shortcut entries created by the current active member where they have Edit access. Only payment labels and normal update metadata change.",
+        "security": [
+          {
+            "UserSession": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "preferences",
+                  "update_shortcut_labels"
+                ],
+                "properties": {
+                  "preferences": {
+                    "type": "object",
+                    "description": "Writable Preferences fields only. Omitted fields keep their current values."
+                  },
+                  "update_shortcut_labels": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved preferences and the number of entries whose payment method changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "preferences",
+                    "updated"
+                  ],
+                  "properties": {
+                    "preferences": {
+                      "$ref": "#/components/schemas/Preferences"
+                    },
+                    "updated": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid preferences or an unlinked Shortcut name"
+          },
+          "401": {
+            "description": "A user session is required"
+          }
+        }
+      }
+    },
+    "/api/expenditure/shortcut-merchant-cleanup": {
+      "get": {
+        "summary": "Preview possible Wallet location endings on earlier Shortcut transactions",
+        "description": "Earlier Shortcut provenance does not identify Wallet taps. Returns candidates with original and suggested merchant names for individual review. Includes only owned personal Shortcut transactions and Shortcut transactions authored by the active Circle member with Edit access.",
+        "security": [
+          {
+            "UserSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Review candidates, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ShortcutMerchantCandidate"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A user session is required"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Apply selected merchant cleanup suggestions",
+        "description": "Rechecks each selection's ownership, edit access and name atomically. Replays with the already-applied name are safe. Only merchant/title and ordinary update metadata change.",
+        "security": [
+          {
+            "UserSession": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "$ref": "#/components/schemas/ShortcutMerchantSelection"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Number of selected entries with the confirmed new name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "updated"
+                  ],
+                  "properties": {
+                    "updated": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid selections"
+          },
+          "401": {
+            "description": "A user session is required"
+          },
+          "409": {
+            "description": "A name changed or a selected entry is unavailable"
+          }
+        }
+      }
+    },
     "/api/expenditure/overview": {
       "get": {
         "summary": "Get monthly spending and income totals",
@@ -1392,7 +1618,7 @@
     "/api/expenditure/circles/{id}/categories": {
       "post": {
         "summary": "Create a Circle category",
-        "description": "",
+        "description": "Owner or Admin. Names are unique within the selected transaction type. Omit kind to create an expense category.",
         "security": [
           {
             "UserSession": []
@@ -1450,7 +1676,7 @@
     "/api/expenditure/circles/{id}/categories/{category}": {
       "patch": {
         "summary": "Rename, recolour, archive or restore a Circle category",
-        "description": "Owner only. Renames atomically update matching entries and increment expense versions without changing amounts, dates, balances or recurring cursors. At least one category must stay active.",
+        "description": "Owner or Admin. Renames keep the category ID and update its label wherever it is shown. Each transaction type must retain at least one active category.",
         "security": [
           {
             "UserSession": []
@@ -1515,8 +1741,8 @@
     },
     "/api/expenditure/circles/{id}/categories/reorder": {
       "post": {
-        "summary": "Reorder all Circle categories, including archived categories",
-        "description": "Owner only. previous_ids must match the complete current order; stale requests return 409.",
+        "summary": "Reorder Circle categories for one transaction type, including archived categories",
+        "description": "Owner or Admin. previous_ids must match the complete current order for the selected kind. Stale requests return 409.",
         "security": [
           {
             "UserSession": []
@@ -1574,7 +1800,7 @@
     "/api/expenditure/circles/{id}/categories/copy": {
       "post": {
         "summary": "Owner or Admin: replace Circle categories from their own personal settings",
-        "description": "",
+        "description": "Replaces Circle categories for the selected transaction type.",
         "security": [
           {
             "UserSession": []
@@ -1858,6 +2084,21 @@
               "maximum": 100,
               "default": 15
             }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "date_desc",
+                "date_asc",
+                "amount_desc",
+                "amount_asc"
+              ],
+              "default": "date_desc"
+            },
+            "description": "Applied before pagination after filters. Amount orders compare original currency units (not FX estimates); the Transactions feed uses own allocated Circle shares, while Circle detail uses full amounts. Equal amounts use newest date, created timestamp and ID for stable ties."
           }
         ],
         "responses": {
@@ -1883,7 +2124,7 @@
     "/api/expenditure/circles/{id}/expenses/{expense}/move-to-personal": {
       "post": {
         "summary": "Move a Circle expense or income to your personal ledger",
-        "description": "Normal users session only. Requires active Circle membership and independent move_scope permission: none denies moves, payer requires paid_by to equal the actor\u2019s membership ID, and all allows any entry. Edit permission neither grants nor restricts moves. Owners and Admins have all Move access. The new personal entry always belongs to the authenticated actor, even when someone else paid. Atomically removes the Circle entry and creates a fresh personal entry with the full positive amount and original kind, currency (even when disabled personally), occurrence, created/updated timestamps, payment method, notes and provenance. A supplied category must be an active personal category ID owned by the user. Omission matches active personal categories by exact name, then a unique case/whitespace-insensitive name, then Other, then the first active category. Removes all Circle allocations and recalculates balances while preserving former-member balances and recorded repayments. Recurrence timezone, calendar controls, anchor, cursor and pause error move intact; earlier generated entries stay in the Circle. No move receipt or original split/receipt snapshot is retained. After a successful move, repeated requests return 404 because the Circle source no longer exists. If a response is lost, refresh both ledgers to confirm the result. Earlier personal-to-Circle receipts remain immutable. Circle API idempotency receipts keep their original destination and return 410 after this move rather than recreating the entry.",
+        "description": "Normal users session only. Requires active Circle membership and independent move_scope permission: none denies moves, payer requires paid_by to equal the actor\u2019s membership ID, and all allows any entry. Edit permission neither grants nor restricts moves. Owners and Admins have all Move access. The new personal entry always belongs to the authenticated actor, even when someone else paid. Atomically removes the Circle entry and creates a fresh personal entry with the full positive amount and original kind, currency (even when disabled personally), occurrence, created/updated timestamps, payment method, notes and provenance. A supplied category must be an active personal category ID owned by the user and matching the transaction kind. Omission matches active personal categories of the same kind by exact name, then a unique case/whitespace-insensitive name, then Other, then the first active category. Removes all Circle allocations and recalculates balances while preserving former-member balances and recorded repayments. Recurrence timezone, calendar controls, anchor, cursor and pause error move intact; earlier generated entries stay in the Circle. No move receipt or original split/receipt snapshot is retained. After a successful move, repeated requests return 404 because the Circle source no longer exists. If a response is lost, refresh both ledgers to confirm the result. Earlier personal-to-Circle receipts remain immutable. Circle API idempotency receipts keep their original destination and return 410 after this move rather than recreating the entry.",
         "security": [
           {
             "UserSession": []
@@ -2022,7 +2263,7 @@
     "/api/expenses/categories": {
       "get": {
         "summary": "List the default API workspace\u2019s categories",
-        "description": "Requires expenses:read in X-API-Key. Returns a plain JSON array of all category records, including archived categories (active=false), in saved sort_order, created, name, id order. Use active categories\u2019 names in API expense creation payloads. Uses the key owner\u2019s preferences.default_api_circle, matching new expense imports: empty selects personal categories, otherwise selects that Circle\u2019s categories and requires active membership. An unavailable default returns 404 without falling back to personal. Unrelated user sessions never override API-key identity.",
+        "description": "Requires expenses:read in X-API-Key. Returns a plain JSON array of all categories of the selected kind, including archived categories (active=false), in saved sort_order, created, name, id order. Use active expense category names in API expense creation payloads. Uses the key owner\u2019s preferences.default_api_circle, matching new expense imports: empty selects personal categories, otherwise selects that Circle\u2019s categories and requires active membership. An unavailable default returns 404 without falling back to personal. Unrelated user sessions never override API-key identity.",
         "security": [
           {
             "ApiKey": []
@@ -2042,6 +2283,9 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid category kind"
+          },
           "401": {
             "description": "Missing, invalid, expired or revoked API key; session authentication alone is insufficient"
           },
@@ -2051,13 +2295,27 @@
           "404": {
             "description": "Circle does not exist or the API key owner is not an active member"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "expense",
+                "income"
+              ],
+              "default": "expense"
+            }
+          }
+        ]
       }
     },
     "/api/expenses/circles/{id}/categories": {
       "get": {
         "summary": "List an explicit Circle\u2019s categories using an API key",
-        "description": "Requires expenses:read in X-API-Key. Returns a plain JSON array of all category records, including archived categories (active=false), in saved sort_order, created, name, id order. Use active categories\u2019 names in API expense creation payloads. The URL overrides default_api_circle. Requires the key owner to be an active Circle member; owner/Admin or Add permission is not required.",
+        "description": "Requires expenses:read in X-API-Key. Returns a plain JSON array of all categories of the selected kind, including archived categories (active=false), in saved sort_order, created, name, id order. Use active expense category names in API expense creation payloads. The URL overrides default_api_circle. Requires the key owner to be an active Circle member; owner/Admin or Add permission is not required.",
         "security": [
           {
             "ApiKey": []
@@ -2077,6 +2335,9 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid category kind"
+          },
           "401": {
             "description": "Missing, invalid, expired or revoked API key; session authentication alone is insufficient"
           },
@@ -2086,7 +2347,21 @@
           "404": {
             "description": "Circle does not exist or the API key owner is not an active member"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "expense",
+                "income"
+              ],
+              "default": "expense"
+            }
+          }
+        ]
       },
       "parameters": [
         {
@@ -2099,6 +2374,277 @@
           }
         }
       ]
+    },
+    "/api/expenditure/push/devices/{installation}": {
+      "put": {
+        "summary": "Register this iOS installation for Circle notifications",
+        "description": "Requires a users session. Registers or transfers this installation to the signed-in user. Replacing its account/token cancels previous pending alerts. Notification choices are per installation and account. New expenses notify other active members; invitations notify existing verified accounts matching the invited email; recorded repayments notify active participants other than the recorder. Income, edits and idempotent replays do not enqueue alerts. Pending invitations are rechecked for matching verified email, expiry, acceptance and revocation; other alerts recheck membership. Tokens and delivery records have no client collection access. Optional Shortcut/API creation alerts notify the creator/key owner for personal and Circle expenses, independently of other Circle members\u2019 alerts. Enable shortcut_expenses and api_expenses per device. Replays, edits, income, moved copies and generated recurring copies do not create own automation alerts. The new choices start disabled; clients send all five choices explicitly.",
+        "security": [
+          {
+            "UserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "token",
+                  "environment",
+                  "server",
+                  "circle_expenses",
+                  "circle_invitations",
+                  "repayments",
+                  "shortcut_expenses",
+                  "api_expenses"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 32,
+                    "maxLength": 512,
+                    "pattern": "^(?:[a-fA-F0-9]{2}){16,256}$"
+                  },
+                  "environment": {
+                    "type": "string",
+                    "enum": [
+                      "sandbox",
+                      "production"
+                    ]
+                  },
+                  "server": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "description": "The exact base URL used by this installation, for account/server isolation when opening an alert."
+                  },
+                  "circle_expenses": {
+                    "type": "boolean"
+                  },
+                  "circle_invitations": {
+                    "type": "boolean"
+                  },
+                  "repayments": {
+                    "type": "boolean"
+                  },
+                  "shortcut_expenses": {
+                    "type": "boolean",
+                    "description": "Opt-in notification for the owning account when this source creates an expense; defaults off on upgrade."
+                  },
+                  "api_expenses": {
+                    "type": "boolean",
+                    "description": "Opt-in notification for the owning account when this source creates an expense; defaults off on upgrade."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Registration saved"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Users session required"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Stop Circle alerts for this installation",
+        "description": "Requires a users session. Deletes only a registration owned by the caller, including its pending deliveries. Safe to repeat; stale sign-out cleanup cannot delete a registration transferred to another user.",
+        "security": [
+          {
+            "UserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Registration removed or absent"
+          },
+          "401": {
+            "description": "Users session required"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update notification choices without registering a device token",
+        "description": "Requires a users session. Updates only the caller\u2019s existing installation and immediately cancels queued alerts for disabled types. Does not transfer ownership or register a token. Returns 204 if no owned registration exists. Allows opting out even when APNs registration is temporarily unavailable.",
+        "security": [
+          {
+            "UserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "circle_expenses",
+                  "circle_invitations",
+                  "repayments",
+                  "shortcut_expenses",
+                  "api_expenses"
+                ],
+                "properties": {
+                  "circle_expenses": {
+                    "type": "boolean"
+                  },
+                  "circle_invitations": {
+                    "type": "boolean"
+                  },
+                  "repayments": {
+                    "type": "boolean"
+                  },
+                  "shortcut_expenses": {
+                    "type": "boolean",
+                    "description": "Opt-in notification for the owning account when this source creates an expense; defaults off on upgrade."
+                  },
+                  "api_expenses": {
+                    "type": "boolean",
+                    "description": "Opt-in notification for the owning account when this source creates an expense; defaults off on upgrade."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Choices updated or owned registration absent"
+          },
+          "400": {
+            "description": "Invalid choices"
+          },
+          "401": {
+            "description": "Users session required"
+          }
+        }
+      }
+    },
+    "/api/expenditure/push/devices/{installation}/test": {
+      "post": {
+        "summary": "Send a one-off APNs test to this iPhone",
+        "description": "Requires a users session. Sends immediately through the configured relay and APNs, without changing saved notification choices, registrations or activity outbox records. Works with all choices off. An existing installation/token binding must belong to this account and installation; an unregistered current token can be tested without saving it. The payload recipient is always the authenticated user; clients cannot supply a message or recipient. Rate limited to one attempt per 10 seconds per account, including concurrent requests. A successful response means Apple accepted the push, not that the iPhone received it. No retry/backfill is queued for explicit tests.",
+        "security": [
+          {
+            "UserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "token",
+                  "environment",
+                  "server",
+                  "request_id"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 32,
+                    "maxLength": 512,
+                    "pattern": "^(?:[a-fA-F0-9]{2}){16,256}$"
+                  },
+                  "environment": {
+                    "type": "string",
+                    "enum": [
+                      "sandbox",
+                      "production"
+                    ]
+                  },
+                  "server": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "description": "The exact base URL used by this installation, for account/server isolation when opening an alert."
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "A new lowercase UUID for each test, echoed as test_id in the push for receipt correlation."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "APNs accepted the test; response contains status=accepted and request_id"
+          },
+          "400": {
+            "description": "Invalid payload or Apple rejected the device token"
+          },
+          "401": {
+            "description": "Users session required"
+          },
+          "403": {
+            "description": "Conflicting registration ownership or installation"
+          },
+          "429": {
+            "description": "Test already running or requested too soon"
+          },
+          "503": {
+            "description": "Relay missing/unreachable/rejected the test, or Apple did not accept it"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2524,7 +3070,8 @@
             "type": "string",
             "enum": [
               "manual",
-              "api"
+              "api",
+              "shortcut"
             ]
           },
           "created": {
@@ -4676,7 +5223,8 @@
             "type": "string",
             "enum": [
               "manual",
-              "api"
+              "api",
+              "shortcut"
             ],
             "readOnly": true
           },
@@ -5470,7 +6018,8 @@
           "name",
           "color",
           "active",
-          "sort_order"
+          "sort_order",
+          "kind"
         ],
         "properties": {
           "id": {
@@ -5490,6 +6039,14 @@
           "sort_order": {
             "type": "integer",
             "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "expense",
+              "income"
+            ],
+            "description": "Transaction type of this category. Set on creation."
           }
         }
       },
@@ -6117,14 +6674,14 @@
             "default": "",
             "maxLength": 15,
             "pattern": "^([a-z0-9]{15})?$",
-            "description": "Optional single relation ID of an active personal category owned by this user, used to prefill new personal expense forms. Empty selects Other, then the first active category. Renames preserve the selection; archiving clears matching defaults atomically. Existing transactions, Circle entries and API import defaults are unchanged."
+            "description": "Optional single relation ID of an active personal expense category owned by this user, used to prefill new personal expense forms. Empty selects Other, then the first active category. Renames preserve the selection; archiving clears matching defaults atomically. Existing transactions, Circle entries and API import defaults are unchanged."
           },
           "default_income_category": {
             "type": "string",
             "default": "",
             "maxLength": 15,
             "pattern": "^([a-z0-9]{15})?$",
-            "description": "Optional single relation ID of an active personal category owned by this user, used to prefill new personal income forms. Empty selects Other, then the first active category. Renames preserve the selection; archiving clears matching defaults atomically. Existing transactions, Circle entries and API import defaults are unchanged."
+            "description": "Optional single relation ID of an active personal income category owned by this user, used to prefill new personal income forms. Empty selects Other, then the first active category. Renames preserve the selection; archiving clears matching defaults atomically. Existing transactions, Circle entries and API import defaults are unchanged."
           },
           "payment_methods": {
             "type": "array",
@@ -6138,11 +6695,96 @@
             "default": [],
             "description": "Ordered per-account payment choices for personal and Circle entry. Names are trimmed, whitespace-normalized and unique ignoring case. New and upgraded accounts start empty. Renaming or removing a choice never changes stored payment_method labels or restricts automation writes."
           },
+          "strip_wallet_merchant_location": {
+            "type": "boolean",
+            "default": false,
+            "description": "Strip supported location endings on new session Shortcut expense writes marked with X-Expenditure-Wallet-Tap: 1. Independent of reviewing past entries."
+          },
+          "shortcut_payment_methods": {
+            "type": "array",
+            "default": [],
+            "maxItems": 100,
+            "description": "Account-specific links for personal and Circle Shortcut creations. Each label is unique ignoring case and whitespace. The target must be a saved payment method.",
+            "items": {
+              "type": "object",
+              "required": [
+                "label",
+                "payment_method"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "payment_method": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              }
+            }
+          },
           "theme": {
             "$ref": "#/components/schemas/ThemePreference"
           }
         },
         "description": "Persisted per-account preferences, editable through the owner-protected PocketBase preferences collection."
+      },
+      "ShortcutMerchantSelection": {
+        "type": "object",
+        "required": [
+          "id",
+          "circle",
+          "original",
+          "merchant"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]{15}$"
+          },
+          "circle": {
+            "type": "string",
+            "description": "Circle ID or an empty string for personal entries."
+          },
+          "original": {
+            "type": "string"
+          },
+          "merchant": {
+            "type": "string"
+          }
+        }
+      },
+      "ShortcutMerchantCandidate": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ShortcutMerchantSelection"
+          },
+          {
+            "type": "object",
+            "required": [
+              "circle_name",
+              "occurred_at",
+              "amount",
+              "currency"
+            ],
+            "properties": {
+              "circle_name": {
+                "type": "string"
+              },
+              "occurred_at": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "integer"
+              },
+              "currency": {
+                "type": "string"
+              }
+            }
+          }
+        ]
       },
       "PersonalEntryInput": {
         "type": "object",
@@ -6545,6 +7187,14 @@
           "color": {
             "type": "string",
             "pattern": "^#[a-fA-F0-9]{6}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "expense",
+              "income"
+            ],
+            "default": "expense"
           }
         }
       },
@@ -6593,6 +7243,14 @@
               "type": "string",
               "pattern": "^[a-z0-9]{15}$"
             }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "expense",
+              "income"
+            ],
+            "default": "expense"
           }
         }
       },
@@ -6612,9 +7270,17 @@
               "type": "string",
               "pattern": "^[a-z0-9]{15}$"
             }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "expense",
+              "income"
+            ],
+            "default": "expense"
           }
         },
-        "description": "Owner/Admin replacement from the authenticated manager\u2019s own personal settings. Copies names, colours, active status and order. Reuses matching Circle category IDs, removes unused unmatched categories, and archives unmatched categories used in history. Historical entries, monetary amounts and balances are preserved. The combined list is limited to 100 categories."
+        "description": "Owner/Admin replacement from the authenticated manager\u2019s own personal settings. Copies the selected transaction type\u2019s names, colours, active status and order. Reuses matching Circle category IDs, removes unused unmatched categories, and archives unmatched categories used in history. Historical entries, monetary amounts and balances are preserved. The selected list is limited to 100 categories."
       },
       "CircleCategoryList": {
         "type": "object",
@@ -7309,6 +7975,10 @@
               "graphite",
               "amber",
               "midnight",
+              "onyx",
+              "coral",
+              "porcelain",
+              "sand",
               "custom"
             ]
           },

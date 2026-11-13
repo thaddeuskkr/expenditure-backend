@@ -1,21 +1,25 @@
 const configuration = require(`${__hooks}/configuration.js`);
 
-function list(app, circle) {
-    return app.findRecordsByFilter("circle_categories", "circle = {:circle}", "sort_order,created,name,id", 0, 0, { circle }).map((record) => record.publicExport());
+function list(app, circle, kind) {
+    return app.findRecordsByFilter("circle_categories", "circle = {:circle}", "kind,sort_order,created,name,id", 0, 0, { circle }).map((record) => record.publicExport()).filter((row) => kind === undefined || row.kind === kind);
 }
 
 function initialize(app, circle) {
-    configuration.defaultNames.forEach((name, index) => {
-        const record = new Record(app.findCollectionByNameOrId("circle_categories"));
-        record.load({ circle, name, color: configuration.colors[index], active: true, sort_order: index });
-        app.save(record);
-    });
+    const collection = app.findCollectionByNameOrId("circle_categories");
+    for (const [kind, names] of [["expense", configuration.defaultNames], ["income", configuration.incomeNames]]) {
+        names.forEach((name, index) => {
+            const record = new Record(collection);
+            record.load({ circle, kind, name, color: configuration.colors[index], active: true, sort_order: index });
+            app.save(record);
+        });
+    }
 }
 
-function select(app, circle, value, expense) {
-    const categories = list(app, circle);
+function select(app, circle, value, expense, kind = "expense") {
+    const categories = list(app, circle, configuration.categoryKind(kind));
+    if (value === undefined && expense && kind === expense.getString("kind"))
+        value = expense.getString("category");
     if (value === undefined) {
-        if (expense) return expense.getString("category");
         const fallback = categories.find((row) => row.active && row.name === "Other") || categories.find((row) => row.active);
         if (!fallback) throw new BadRequestError("Add an active category to this circle first.");
         return fallback.id;
@@ -29,7 +33,7 @@ function select(app, circle, value, expense) {
 }
 
 function byName(app, circle, name) {
-    const category = list(app, circle).find((item) => item.name.toLowerCase() === name.toLowerCase());
+    const category = list(app, circle, "expense").find((item) => item.name.toLowerCase() === name.toLowerCase());
     if (!category || !category.active) throw new BadRequestError("Choose an active category from this circle.");
     return category;
 }
@@ -60,15 +64,16 @@ function write(e, callback, status) {
 }
 
 function create(e) {
-    const data = body(e, ["name", "color"]);
+    const data = body(e, ["name", "color", "kind"]);
+    const kind = configuration.categoryKind(data.kind);
     if (data.name === undefined || data.color === undefined) throw new BadRequestError("Provide name and color.");
     validate(data);
     return write(e, (app, circle) => {
-        const existing = list(app, circle);
+        const existing = list(app, circle, kind);
         if (existing.length >= 100) throw new BadRequestError("You can have up to 100 circle categories, including archived categories.");
         if (existing.some((row) => row.name.toLowerCase() === data.name.trim().toLowerCase())) throw new BadRequestError("A category with this name already exists.");
         const record = new Record(app.findCollectionByNameOrId("circle_categories"));
-        record.load({ circle, name: data.name.trim(), color: data.color, active: true, sort_order: existing.length ? existing[existing.length - 1].sort_order + 1 : 0 });
+        record.load({ circle, kind, name: data.name.trim(), color: data.color, active: true, sort_order: existing.length ? existing[existing.length - 1].sort_order + 1 : 0 });
         app.save(record);
         return record.publicExport();
     }, 201);
@@ -88,7 +93,7 @@ function update(e) {
         const previous = record.getString("name");
         const name = data.name === undefined ? previous : data.name.trim();
         const active = data.active === undefined ? record.getBool("active") : data.active;
-        const categories = list(app, circle);
+        const categories = list(app, circle, record.getString("kind"));
         if (categories.some((row) => row.id !== record.id && row.name.toLowerCase() === name.toLowerCase())) throw new BadRequestError("A category with this name already exists.");
         if (!active && record.getBool("active") && categories.filter((row) => row.active).length <= 1) throw new BadRequestError("Keep at least one active category.");
         record.load({ name, active, color: data.color === undefined ? record.getString("color") : data.color });
@@ -107,10 +112,11 @@ function checkPrevious(items, previous) {
 }
 
 function reorder(e) {
-    const data = body(e, ["ids", "previous_ids"]);
+    const data = body(e, ["ids", "previous_ids", "kind"]);
+    const kind = configuration.categoryKind(data.kind);
     if (!validIds(data.ids)) throw new BadRequestError("Provide category IDs, without duplicates.");
     return write(e, (app, circle) => {
-        const items = list(app, circle);
+        const items = list(app, circle, kind);
         checkPrevious(items, data.previous_ids);
         if (data.ids.length !== items.length || data.ids.some((id) => !items.some((row) => row.id === id))) throw new BadRequestError("Include each circle category exactly once.");
         data.ids.forEach((id, index) => {
@@ -118,17 +124,18 @@ function reorder(e) {
             record.set("sort_order", index);
             app.save(record);
         });
-        return { items: list(app, circle) };
+        return { items: list(app, circle, kind) };
     });
 }
 
 function copy(e) {
-    const data = body(e, ["previous_ids"]);
+    const data = body(e, ["previous_ids", "kind"]);
+    const kind = configuration.categoryKind(data.kind);
     return write(e, (app, circle) => {
-        const existing = list(app, circle);
+        const existing = list(app, circle, kind);
         checkPrevious(existing, data.previous_ids);
         // Owners and Admins may copy only from their own personal settings.
-        const source = configuration.categories(app, e.auth.id);
+        const source = configuration.categories(app, e.auth.id, kind);
         const desired = source.map((row) => row.name.toLowerCase());
         const historical = existing.filter((row) => desired.indexOf(row.name.toLowerCase()) < 0 && app.countRecords("circle_expenses", $dbx.hashExp({ circle, category: row.id })) > 0);
         if (source.length + historical.length > 100) throw new BadRequestError("The replacement and historical categories exceed the limit of 100. Reduce your personal category list first.");
@@ -137,7 +144,7 @@ function copy(e) {
         source.forEach((row, index) => {
             const match = existing.find((item) => item.name.toLowerCase() === row.name.toLowerCase());
             const record = match ? app.findRecordById("circle_categories", match.id) : new Record(app.findCollectionByNameOrId("circle_categories"));
-            record.load({ circle, name: row.name, color: row.color, active: row.active, sort_order: index });
+            record.load({ circle, kind, name: row.name, color: row.color, active: row.active, sort_order: index });
             app.save(record);
         });
         historical.forEach((row, index) => {
@@ -145,7 +152,7 @@ function copy(e) {
             record.load({ active: false, sort_order: source.length + index });
             app.save(record);
         });
-        return { items: list(app, circle) };
+        return { items: list(app, circle, kind) };
     });
 }
 

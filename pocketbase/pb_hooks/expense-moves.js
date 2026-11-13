@@ -40,6 +40,7 @@ function move(e) {
             origin_expense: personal.id,
         });
         for (const field of ["amount", "currency", "payment_method", "notes", "occurred_at", "source", "recurrence", "recurrence_interval", "recurrence_day", "recurrence_weekdays", "recurrence_month", "recurrence_timezone", "recurrence_anchor", "recurrence_next", "recurrence_error"]) shared.set(field, personal.get(field));
+        require(`${__hooks}/push.js`).skipAutomation(shared);
         app.save(shared);
         app.db().newQuery("UPDATE circle_expenses SET created = {:created}, updated = {:updated} WHERE id = {:id}")
             .bind({ id: shared.id, created: personal.getString("created"), updated: personal.getString("updated") }).execute();
@@ -54,8 +55,8 @@ function move(e) {
     return e.json(200, result);
 }
 
-function personalCategory(app, user, name) {
-    const categories = require(`${__hooks}/configuration.js`).categories(app, user).filter((item) => item.active);
+function personalCategory(app, user, name, kind) {
+    const categories = require(`${__hooks}/configuration.js`).categories(app, user, kind).filter((item) => item.active);
     const normalized = (value) => value.trim().replace(/\s+/g, " ").toLowerCase();
     const exact = categories.find((item) => item.name === name);
     const matches = categories.filter((item) => normalized(item.name) === normalized(name));
@@ -88,7 +89,10 @@ function moveToPersonal(e) {
         if (shared.getInt("version") !== data.version) throw new ApiError(409, "This transaction changed. Refresh it before moving.");
         if (["expense", "income"].indexOf(shared.getString("kind")) < 0 || !configuration.currency(shared.getString("currency")) || shared.getInt("amount") < 1 || shared.getInt("amount") > require(`${__hooks}/circles-core.cjs`).MAX_AMOUNT)
             throw new BadRequestError("This transaction has invalid financial data.");
-        const category = requestedCategory ? configuration.category(app, e.auth.id, requestedCategory, false) : personalCategory(app, e.auth.id, app.findRecordById("circle_categories", shared.getString("category")).getString("name"));
+        const kind = shared.getString("kind");
+        const category = requestedCategory
+            ? configuration.category(app, e.auth.id, requestedCategory, false, kind)
+            : personalCategory(app, e.auth.id, app.findRecordById("circle_categories", shared.getString("category")).getString("name"), kind);
         const members = service.memberRecords(app, circle.id), before = service.balances(app, circle.id);
         const personal = new Record(app.findCollectionByNameOrId("expenses"));
         personal.load({ user: e.auth.id, merchant: shared.getString("title"), category });
@@ -96,6 +100,7 @@ function moveToPersonal(e) {
         // Copy only canonical stored ledger values and the server-validated category.
         // New-entry validation would reject disabled historical currencies and reset
         // the saved recurrence timezone/cursor. No client money or ownership is loaded.
+        require(`${__hooks}/push.js`).skipAutomation(personal);
         app.saveNoValidate(personal);
         app.db().newQuery("UPDATE expenses SET created = {:created}, updated = {:updated} WHERE id = {:id}")
             .bind({ id: personal.id, created: shared.getString("created"), updated: shared.getString("updated") }).execute();

@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!apns.mjs
+!configuration.mjs
+!healthcheck.mjs
+!server.mjs

@@ -732,6 +732,7 @@ test(
             const invitation = await api(`${root}/${filteredCircle.id}/invitations`, alice.token, { email: bob.email }, "POST", 201);
             const joined = await api(`/api/expenditure/circle-invitations/${invitation.id}/accept`, bob.token, {});
             const food = initial.categories.find((row) => row.name === "Food & drinks").id;
+            const incomeCategory = initial.categories.find((row) => row.kind === "income").id;
             const transport = initial.categories.find((row) => row.name === "Transport").id;
             async function entry(title, occurred_at, category = food, currency = "SGD", kind = "expense", member = initial.me) {
                 return api(`${root}/${filteredCircle.id}/expenses`, alice.token, {
@@ -742,7 +743,7 @@ test(
 
             const matches = [];
             for (let index = 0; index < 28; index++) {
-                matches.push(await entry(`Matching ${index}`, "2026-11-15T12:00:00+08:00", food, "SGD", index === 0 ? "income" : "expense", index === 1 ? joined.member : initial.me));
+                matches.push(await entry(`Matching ${index}`, "2026-11-15T12:00:00+08:00", index === 0 ? incomeCategory : food, "SGD", index === 0 ? "income" : "expense", index === 1 ? joined.member : initial.me));
             }
 
             const start = await entry("Inclusive Singapore boundary", "2026-11-01T00:00:00+08:00");
@@ -757,12 +758,16 @@ test(
             const first = await api(`${root}/${filteredCircle.id}?${query}`, alice.token);
             query.set("expense_page", "2");
             const second = await api(`${root}/${filteredCircle.id}?${query}`, alice.token);
-            assert.equal(first.expenses.totalItems, 29);
+            assert.equal(first.expenses.totalItems, 28);
             assert.equal(first.expenses.totalPages, 2);
             assert.equal(first.expenses.items.length, 25);
-            assert.equal(second.expenses.items.length, 4);
-            assert.deepEqual(new Set([...first.expenses.items, ...second.expenses.items].map((row) => row.id)), new Set(matches.map((row) => row.id)));
-            assert.ok([...first.expenses.items, ...second.expenses.items].some((row) => row.kind === "income"));
+            assert.equal(second.expenses.items.length, 3);
+            assert.deepEqual(new Set([...first.expenses.items, ...second.expenses.items].map((row) => row.id)), new Set(matches.filter((row) => row.kind === "expense").map((row) => row.id)));
+            assert.ok([...first.expenses.items, ...second.expenses.items].every((row) => row.kind === "expense"));
+            const incomeQuery = new URLSearchParams(query);
+            incomeQuery.set("expense_category", incomeCategory);
+            incomeQuery.set("expense_page", "1");
+            assert.deepEqual((await api(`${root}/${filteredCircle.id}?${incomeQuery}`, alice.token)).expenses.items.map((row) => row.id), [matches[0].id]);
             assert.ok([...first.expenses.items, ...second.expenses.items].some((row) => row.shares.every((share) => share.member !== initial.me)), "Include entries with no viewer allocation");
             for (const field of ["balances", "suggestions", "totals", "settlements", "categories"]) assert.deepEqual(first[field], complete[field], `${field} stays all-time`);
             query.set("expense_category", "all");

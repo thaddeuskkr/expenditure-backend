@@ -167,7 +167,7 @@ function generate(app, collection, id, now) {
                 service.memberInCircle(members, seed.getString("paid_by"), []);
                 JSON.parse(seed.getString("shares")).forEach((share) => service.memberInCircle(members, share.member, []));
                 if (tx.countRecords(collection, $dbx.hashExp({ circle: seed.getString("circle") })) >= 10000) throw new Error("This circle has reached its entry limit.");
-                require(`${__hooks}/circle-categories.js`).select(tx, seed.getString("circle"), seed.getString("category"), null);
+                require(`${__hooks}/circle-categories.js`).select(tx, seed.getString("circle"), seed.getString("category"), null, seed.getString("kind"));
                 before = service.balances(tx, seed.getString("circle"));
             } else tx.findRecordById("users", seed.getString("user"));
             const copy = new Record(tx.findCollectionByNameOrId(collection));
@@ -177,6 +177,7 @@ function generate(app, collection, id, now) {
             copy.set("recurrence_weekdays", []);
             if (shared) copy.set("version", 1);
             else copy.set("source", "manual");
+            require(`${__hooks}/push.js`).skipAutomation(copy);
             tx.save(copy);
             if (shared) require(`${__hooks}/circles-service.js`).preserveFormerBalances(tx, seed.getString("circle"), members, before);
             next = nextDate(next, seed.getString("recurrence"), seed.getString("recurrence_anchor"), seed.getString("recurrence_timezone"), seed.getInt("recurrence_interval"), seed.getInt("recurrence_day"), (JSON.parse(seed.getString("recurrence_weekdays") || "[]") || []), seed.getInt("recurrence_month"));

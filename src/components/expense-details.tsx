@@ -35,6 +35,7 @@ export function ExpenseDetails({ expense, onClose, onEdit, onDelete }: {
                     <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                         <span className="rounded-md border px-2 py-1 wrap-anywhere">{categoryLabel(expense)}</span>
                         {expense.source === "api" && <span className="flex items-center gap-1.5 px-1 py-1"><Code2 aria-hidden="true" className="size-3" />Via API</span>}
+                        {expense.source === "shortcut" && <span className="flex items-center gap-1.5 px-1 py-1"><Code2 aria-hidden="true" className="size-3" />Via Shortcut</span>}
                     </div>
                 </DialogHeader>
                 <dl className="grid gap-4 border-y py-4 sm:grid-cols-2">

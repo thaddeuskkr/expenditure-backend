@@ -49,7 +49,7 @@ export interface CircleExpense extends RecurringFields {
     title: string;
     category: string;
     expand?: { category?: CategoryDefinition };
-    source: "manual" | "api";
+    source: "manual" | "api" | "shortcut";
     origin_expense: string;
     currency: string;
     amount: number;
@@ -121,7 +121,7 @@ const base = "/api/expenditure/circles";
 const invitations = "/api/expenditure/circle-invitations";
 export const circlesApi = {
     list: () => pb.send<CircleIndex>(base, { method: "GET" }),
-    detail: (id: string, expensePage = 1, settlementPage = 1, filters: { expense_from?: string; expense_to?: string; expense_category?: string; expense_currency?: string } = {}) =>
+    detail: (id: string, expensePage = 1, settlementPage = 1, filters: { expense_from?: string; expense_to?: string; expense_category?: string; expense_currency?: string; expense_sort?: string } = {}) =>
         pb.send<CircleDetail>(
             `${base}/${id}?${new URLSearchParams({ expense_page: String(expensePage), settlement_page: String(settlementPage), ...filters })}`,
             { method: "GET" },

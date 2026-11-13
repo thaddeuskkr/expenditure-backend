@@ -1,0 +1,47 @@
+name: expenditure-push
+
+services:
+  push-relay:
+    image: expenditure-push-relay:41
+    build:
+      context: .
+    restart: unless-stopped
+    init: true
+    user: "${RELAY_UID:-1000}:${RELAY_GID:-1000}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8091"
+      APNS_TEAM_ID: "${APNS_TEAM_ID:?Set APNS_TEAM_ID in .env}"
+      APNS_KEY_ID: "${APNS_KEY_ID:?Set APNS_KEY_ID in .env}"
+      APNS_TOPIC: "${APNS_TOPIC:-dev.tkkr.Expenditure}"
+      APNS_KEY_PATH: /run/secrets/apns_key
+      EXPENDITURE_PUSH_RELAY_SECRET_FILE: /run/secrets/relay_secret
+    secrets:
+      - apns_key
+      - relay_secret
+    ports:
+      - "127.0.0.1:${RELAY_PORT:-8091}:8091"
+    networks:
+      - push
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+secrets:
+  apns_key:
+    file: "${APNS_KEY_FILE:?Set APNS_KEY_FILE to the host .p8 path}"
+  relay_secret:
+    file: "${RELAY_SECRET_FILE:?Set RELAY_SECRET_FILE to the host shared-secret path}"
+
+networks:
+  push:
+    name: "${PUSH_RELAY_NETWORK:-expenditure-push}"
+    external: true

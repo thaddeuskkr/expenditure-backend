@@ -2,6 +2,15 @@ cronAdd("expenditure_exchange_rates", "7 * * * *", () => {
     require(`${__hooks}/exchange-rates.js`).refresh($app);
 });
 
+routerAdd("GET", "/api/expenditure/shortcut-merchant-cleanup", (e) =>
+    require(`${__hooks}/shortcut-wallet.js`).review(e), $apis.requireAuth("users"));
+routerAdd("PATCH", "/api/expenditure/shortcut-merchant-cleanup", (e) =>
+    require(`${__hooks}/shortcut-wallet.js`).apply(e), $apis.requireAuth("users"), $apis.bodyLimit(4194304));
+
+routerAdd("PATCH", "/api/expenditure/preferences/shortcut-payments", (e) =>
+    require(`${__hooks}/shortcut-payments.js`).saveWithHistory(e),
+$apis.requireAuth("users"), $apis.bodyLimit(131072));
+
 routerAdd(
     "GET",
     "/api/expenditure/config",
@@ -40,8 +49,9 @@ routerAdd(
         const config = require(`${__hooks}/configuration.js`);
         config.initialize(e.app, e.auth.id);
         const data = e.requestInfo().body;
-        if (Object.keys(data).some((field) => ["name", "color"].indexOf(field) < 0))
-            throw new BadRequestError("Only name and color are accepted.");
+        if (Object.keys(data).some((field) => ["name", "color", "kind"].indexOf(field) < 0))
+            throw new BadRequestError("Only name, color and kind are accepted.");
+        const kind = config.categoryKind(data.kind);
         if (
             typeof data.name !== "string" ||
             !data.name.trim() ||
@@ -56,23 +66,24 @@ routerAdd(
         let created;
         e.app.runInTransaction((app) => {
             if (
-                app.countRecords("categories", $dbx.hashExp({ user: e.auth.id })) >= 100
+                app.countRecords("categories", $dbx.hashExp({ user: e.auth.id, kind })) >= 100
             )
                 throw new BadRequestError("You can have up to 100 categories.");
             if (
                 app.countRecords(
                     "categories",
-                    $dbx.exp("user = {:user} AND lower(name) = lower({:name})", {
-                        user: e.auth.id,
+                    $dbx.exp("user = {:user} AND kind = {:kind} AND lower(name) = lower({:name})", {
+                        user: e.auth.id, kind,
                         name: data.name.trim(),
                     }),
                 )
             )
                 throw new BadRequestError("A category with this name already exists.");
             const record = new Record(app.findCollectionByNameOrId("categories"));
-            const existing = config.categories(app, e.auth.id);
+            const existing = config.categories(app, e.auth.id, kind);
             record.load({
                 user: e.auth.id,
+                kind,
                 name: data.name.trim(),
                 color: data.color,
                 active: true,
@@ -99,12 +110,13 @@ routerAdd(
         }
 
         if (!validIds(data.ids) || !validIds(data.previous_ids) ||
-            Object.keys(data).some((key) => ["ids", "previous_ids"].indexOf(key) < 0))
+            Object.keys(data).some((key) => ["ids", "previous_ids", "kind"].indexOf(key) < 0))
             throw new BadRequestError("Provide the current and requested category IDs, without duplicates.");
+        const kind = config.categoryKind(data.kind);
         let items;
         e.app.runInTransaction((app) => {
             const records = app.findRecordsByFilter(
-                "categories", "user = {:user}", "sort_order,created,name,id", 0, 0, { user: e.auth.id },
+                "categories", "user = {:user} && kind = {:kind}", "sort_order,created,name,id", 0, 0, { user: e.auth.id, kind },
             );
             const current = records.map((record) => record.id);
             if (data.previous_ids.length !== current.length ||
@@ -119,7 +131,7 @@ routerAdd(
                     app.save(record);
                 }
             });
-            items = config.categories(app, e.auth.id);
+            items = config.categories(app, e.auth.id, kind);
         });
         e.response.header().set("Cache-Control", "no-store");
         return e.json(200, { items });
@@ -165,6 +177,7 @@ routerAdd(
                 throw new NotFoundError("Category not found.");
             }
 
+            const kind = record.getString("kind");
             const name =
                 data.name === undefined ? record.getString("name") : data.name.trim();
             const active =
@@ -173,8 +186,8 @@ routerAdd(
                 app.countRecords(
                     "categories",
                     $dbx.exp(
-                        "user = {:user} AND id != {:id} AND lower(name) = lower({:name})",
-                        { user: e.auth.id, id: record.id, name },
+                        "user = {:user} AND kind = {:kind} AND id != {:id} AND lower(name) = lower({:name})",
+                        { user: e.auth.id, kind, id: record.id, name },
                     ),
                 )
             )
@@ -184,7 +197,7 @@ routerAdd(
                 record.getBool("active") &&
                 app.countRecords(
                     "categories",
-                    $dbx.hashExp({ user: e.auth.id, active: true }),
+                    $dbx.hashExp({ user: e.auth.id, kind, active: true }),
                 ) <= 1
             )
                 throw new BadRequestError("Keep at least one active category.");

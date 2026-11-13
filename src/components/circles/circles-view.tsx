@@ -1,5 +1,6 @@
 "use client";
 
+import { TransactionSort } from "../transaction-sort";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Ellipsis, Loader2, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -77,7 +78,7 @@ export function CirclesView({ initialCircle, month, onMonthChange, onTransaction
     const [settlement, setSettlement] = useState<SettlementSuggestion | CircleSettlement | null>(null),
         [confirmation, setConfirmation] = useState<Confirmation | null>(null);
     const [filterCurrency, setFilterCurrency] = useState("");
-    const [ledgerFilters, setLedgerFilters] = useState({ month, category: "all", currency: "all", page: 1 });
+    const [ledgerFilters, setLedgerFilters] = useState({ month, category: "all", currency: "all", sort: "date_desc", page: 1 });
     // A shared month change starts at page one, even when this Circle is already open.
     if (ledgerFilters.month !== month) setLedgerFilters({ ...ledgerFilters, month, page: 1 });
     const range = useMemo(() => monthBounds(month, preferences.timezone), [month, preferences.timezone]);
@@ -100,7 +101,7 @@ export function CirclesView({ initialCircle, month, onMonthChange, onTransaction
                 const [nextIndex, nextDetail] = await Promise.all([
                     circlesApi.list(),
                     selected ?
-                            circlesApi.detail(selected, ledgerFilters.page, settlementPage, { expense_from: range.from, expense_to: range.to, expense_category: ledgerFilters.category, expense_currency: ledgerFilters.currency }) :
+                            circlesApi.detail(selected, ledgerFilters.page, settlementPage, { expense_from: range.from, expense_to: range.to, expense_category: ledgerFilters.category, expense_currency: ledgerFilters.currency, expense_sort: ledgerFilters.sort }) :
                             Promise.resolve(null),
                 ]);
                 if (active) {
@@ -140,7 +141,7 @@ export function CirclesView({ initialCircle, month, onMonthChange, onTransaction
         setSelected(id);
         setSettlementPage(1);
         setFilterCurrency("");
-        setLedgerFilters({ month, category: "all", currency: "all", page: 1 });
+        setLedgerFilters({ month, category: "all", currency: "all", sort: "date_desc", page: 1 });
         setTab("Expenses");
     }
 
@@ -559,9 +560,11 @@ export function CirclesView({ initialCircle, month, onMonthChange, onTransaction
                                 <SelectTrigger aria-label="Circle transaction currency" className="h-10! w-auto text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent><SelectItem value="all">All currencies</SelectItem>{currencies.map((code) => <SelectItem key={code} value={code}>{code}</SelectItem>)}</SelectContent>
                             </Select>
-                            {(ledgerFilters.category !== "all" || ledgerFilters.currency !== "all") && <Button variant="ghost" size="sm" onClick={() => setLedgerFilters({ month, category: "all", currency: "all", page: 1 })}>Reset filters</Button>}
+                            <TransactionSort value={ledgerFilters.sort} onChange={(sort) => setLedgerFilters({ ...ledgerFilters, sort, page: 1 })} />
+                            {(ledgerFilters.category !== "all" || ledgerFilters.currency !== "all" || ledgerFilters.sort !== "date_desc") && <Button variant="ghost" size="sm" onClick={() => setLedgerFilters({ month, category: "all", currency: "all", sort: "date_desc", page: 1 })}>Reset filters</Button>}
                         </div>
                     )}
+                    {tab === "Expenses" && ledgerFilters.sort.startsWith("amount_") && ledgerFilters.currency === "all" && <p className="text-xs text-muted-foreground">Amounts in original currencies</p>}
                     {tab === "Expenses" && (
                         <CircleExpenseList
                             detail={detail}

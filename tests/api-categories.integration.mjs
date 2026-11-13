@@ -70,6 +70,7 @@ test("API-key category lookup follows workspace defaults and membership boundari
 
     const owner = await user("Owner"), member = await user("Member"), outsider = await user("Outsider");
     const root = "/api/expenditure/circles";
+    const forKind = (rows, kind = "expense") => rows.filter((row) => row.kind === kind);
     const path = "/api/expenses/categories";
     const circle = await api(root, { token: owner.token, body: { name: "Shared", currency: "SGD" }, expected: 201 });
     const second = await api(root, { token: owner.token, body: { name: "Explicit", currency: "JPY" }, expected: 201 });
@@ -109,17 +110,22 @@ test("API-key category lookup follows workspace defaults and membership boundari
         }
 
         await api(explicit, { token: owner.token, key: outsiderKey.key, expected: 404 });
-        assert.deepEqual(await api(path, { token: owner.token, key: memberKey.key }), (await config(member)).categories);
+        assert.deepEqual(await api(path, { token: owner.token, key: memberKey.key }), forKind((await config(member)).categories));
         const combined = await key(member, ["expenses:read", "expenses:write"]);
-        assert.deepEqual(await api(path, { key: combined.key }), (await config(member)).categories);
+        assert.deepEqual(await api(path, { key: combined.key }), forKind((await config(member)).categories));
+    });
+    await t.test("lookup can return only income and rejects unsupported kinds", async () => {
+        assert.deepEqual(await api(path + "?kind=income", { key: memberKey.key }), forKind((await config(member)).categories, "income"));
+        assert.deepEqual(await api(explicit + "?kind=income", { key: memberKey.key }), forKind((await api(`${root}/${circle.id}`, { token: owner.token })).categories, "income"));
+        await api(path + "?kind=transfer", { key: memberKey.key, expected: 400 });
     });
     await t.test("personal lookup includes renamed and archived categories in saved order", async () => {
         await api(`/api/expenditure/categories/${personal.id}`, { token: member.token, method: "PATCH", body: { name: "Archived personal", active: false } });
-        const before = (await config(member)).categories.map((row) => row.id);
+        const before = forKind((await config(member)).categories).map((row) => row.id);
         await api("/api/expenditure/categories/reorder", { token: member.token, body: { ids: before.toReversed(), previous_ids: before } });
         const categories = await api(path, { key: memberKey.key });
         assert.ok(Array.isArray(categories));
-        assert.deepEqual(categories, (await config(member)).categories);
+        assert.deepEqual(categories, forKind((await config(member)).categories));
         assert.deepEqual(categories.map((row) => row.id), before.toReversed());
         assert.ok(categories.length > 30);
         assert.equal(categories.find((row) => row.id === personal.id).name, "Archived personal");
@@ -138,7 +144,7 @@ test("API-key category lookup follows workspace defaults and membership boundari
         assert.deepEqual(await api(path, { key: ownerKey.key }), await api(secondPath, { key: ownerKey.key }));
         assert.ok((await api(explicit, { key: ownerKey.key })).some((row) => row.id === shared.id));
         await setDefault(owner, ownerConfig.preferences, "");
-        assert.deepEqual(await api(path, { key: ownerKey.key }), (await config(owner)).categories);
+        assert.deepEqual(await api(path, { key: ownerKey.key }), forKind((await config(owner)).categories));
         assert.ok((await api(explicit, { key: memberKey.key })).some((row) => row.id === shared.id));
     });
     await t.test("ordinary members can read the full Circle category order without Add or management access", async () => {
@@ -147,7 +153,7 @@ test("API-key category lookup follows workspace defaults and membership boundari
         const before = (await api(explicit, { key: memberKey.key })).map((row) => row.id);
         await api(`${root}/${circle.id}/categories/reorder`, { token: owner.token, body: { ids: before.toReversed(), previous_ids: before } });
         const categories = await api(explicit, { key: memberKey.key });
-        assert.deepEqual(categories, (await api(`${root}/${circle.id}`, { token: owner.token })).categories);
+        assert.deepEqual(categories, forKind((await api(`${root}/${circle.id}`, { token: owner.token })).categories));
         assert.deepEqual(categories.map((row) => row.id), before.toReversed());
         assert.ok(categories.length > 30);
         assert.equal(categories.find((row) => row.id === shared.id).name, "Archived shared");
@@ -166,12 +172,12 @@ test("API-key category lookup follows workspace defaults and membership boundari
         await api(explicit, { token: owner.token, key: memberKey.key, expected: 404 });
         await api(path, { key: memberKey.key, expected: 404 });
         await setDefault(member, memberConfig.preferences, "");
-        assert.deepEqual(await api(path, { key: memberKey.key }), (await config(member)).categories);
+        assert.deepEqual(await api(path, { key: memberKey.key }), forKind((await config(member)).categories));
         await setDefault(owner, ownerConfig.preferences, second.id);
         await api(`${root}/${second.id}`, { token: owner.token, method: "DELETE", body: { confirmation: second.name, version: second.version } });
         await api(path, { key: ownerKey.key, expected: 404 });
         await api(secondPath, { key: ownerKey.key, expected: 404 });
         await setDefault(owner, ownerConfig.preferences, "");
-        assert.deepEqual(await api(path, { key: ownerKey.key }), (await config(owner)).categories);
+        assert.deepEqual(await api(path, { key: ownerKey.key }), forKind((await config(owner)).categories));
     });
 });

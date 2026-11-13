@@ -1,0 +1,5 @@
+# Deployment credentials belong on the host, never in source control.
+.env*
+!.env.example
+*.p8
+secrets/

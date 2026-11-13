@@ -87,7 +87,7 @@ export interface Expense extends RecordModel, RecurringFields {
     occurred_at: string;
     notes: string;
     payment_method: string;
-    source: "manual" | "api";
+    source: "manual" | "api" | "shortcut";
 }
 export interface Budget extends RecordModel {
     month: string;
@@ -112,6 +112,8 @@ export interface Preferences extends RecordModel {
     timezone: string;
     currencies: string[];
     payment_methods: string[];
+    shortcut_payment_methods: { label: string; payment_method: string }[];
+    strip_wallet_merchant_location: boolean;
 }
 
 export interface CircleTransaction extends RecordModel, RecurringFields {
@@ -126,7 +128,7 @@ export interface CircleTransaction extends RecordModel, RecurringFields {
     occurred_at: string;
     notes: string;
     payment_method: string;
-    source: "manual" | "api";
+    source: "manual" | "api" | "shortcut";
     circle: string;
     membership_active: boolean;
     expand: { circle: { id: string; name: string; icon: string }; category?: CategoryDefinition };

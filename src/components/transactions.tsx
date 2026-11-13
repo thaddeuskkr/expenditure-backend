@@ -99,7 +99,7 @@ export function Transactions({
                                                     {circle ?
                                                         `Circle · ${circle.expand.circle.name}` :
                                                         expense.payment_method ||
-                                                        (expense.source === "api" ? "Via API" : "Manual entry")}
+                                                        (expense.source === "shortcut" ? "Via Shortcut" : expense.source === "api" ? "Via API" : "Manual entry")}
                                                 </span>
                                                 {expense.recurrence && <span className="shrink-0 whitespace-nowrap" title={recurrenceLabel(expense)}><span aria-hidden="true" className="mr-2">·</span>{recurrenceFrequencyLabel(expense)}</span>}
                                             </span>

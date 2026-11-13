@@ -293,10 +293,10 @@ test("Circle member permissions cover each action and every creation path", { ti
         const category = await api(`${g.path}/categories`, { token: member.token, body: { name: "Admin category", color: "#123456" }, expected: 201 });
         await api(`${g.path}/categories/${category.id}`, { token: member.token, method: "PATCH", body: { name: "Admin renamed category", active: false } });
         d = await detail(g, member);
-        const previous_ids = d.categories.map((row) => row.id);
+        const previous_ids = d.categories.filter((row) => row.kind === "expense").map((row) => row.id);
         await api(`${g.path}/categories/reorder`, { token: member.token, method: "POST", body: { previous_ids, ids: [...previous_ids].reverse() } });
         d = await detail(g, member);
-        await api(`${g.path}/categories/copy`, { token: member.token, body: { previous_ids: d.categories.map((row) => row.id) } });
+        await api(`${g.path}/categories/copy`, { token: member.token, body: { previous_ids: d.categories.filter((row) => row.kind === "expense").map((row) => row.id) } });
         const invitation = await api(`${g.path}/invitations`, { token: member.token, body: { email: outsider.email }, expected: 201 });
         assert.ok((await detail(g, member)).invitations.some((row) => row.id === invitation.id));
         await api(`/api/expenditure/circle-invitations/${invitation.id}`, { token: member.token, method: "DELETE" });

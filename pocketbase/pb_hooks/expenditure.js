@@ -114,7 +114,7 @@ function validateExpense(data, app, user, original, circle) {
     if (categoryName === undefined) {
         if (original) categoryName = original.category;
         else {
-            const available = (circle ? require(`${__hooks}/circle-categories.js`).list(app, circle.id) : config.categories(app, user)).filter((item) => item.active);
+            const available = (circle ? require(`${__hooks}/circle-categories.js`).list(app, circle.id, "expense") : config.categories(app, user, "expense")).filter((item) => item.active);
             const fallback = available.find((c) => c.name === "Other") || available[0];
             if (!fallback)
                 throw new BadRequestError("Add an active category in this workspace first.");

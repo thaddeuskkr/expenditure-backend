@@ -27,7 +27,7 @@ export async function resolveCategoryFixture(base, path, body, token) {
             if (response.ok) categories = (await response.json()).categories;
         }
 
-        const resolve = (name) => categories?.find((item) => item.name.toLowerCase() === name.trim().toLowerCase())?.id || name;
+        const resolve = (name) => categories?.find((item) => item.kind === (body?.kind || "expense") && item.name.toLowerCase() === name.trim().toLowerCase())?.id || name;
         if (typeof body?.category === "string") body = { ...body, category: native?.[1] === "budgets" && body.category === "Overall" ? "" : resolve(body.category) };
         if (url.searchParams.has("category")) {
             const name = url.searchParams.get("category");

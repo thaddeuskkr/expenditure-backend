@@ -244,7 +244,14 @@ function expenseFilters(query) {
         clauses.push("category = {:category}");
     }
 
-    return { clauses, params };
+    const search = (query.get("expense_search") || "").trim();
+    if (search.length > 200) throw new BadRequestError("Search must be at most 200 characters.");
+    if (search) {
+        params.search = search;
+        clauses.push("(instr(lower(title), lower({:search})) > 0 OR instr(lower(notes), lower({:search})) > 0 OR instr(lower(payment_method), lower({:search})) > 0)");
+    }
+
+    return { clauses, params, sort: require(`${__hooks}/ledger-sort.js`).parse(query, "expense_sort") };
 }
 
 function page(app, collection, circle, requested, mapper, filters) {
@@ -255,17 +262,13 @@ function page(app, collection, circle, requested, mapper, filters) {
         1,
         Math.min(Math.max(1, Math.ceil(total / 25)), parseInt(requested, 10) || 1),
     );
+    // The count and page share the same bound SQL, including literal substring search.
+    const rows = arrayOf(new Record());
+    const order = require(`${__hooks}/ledger-sort.js`).order(filters?.sort || "date_desc", "amount", "currency", ["occurred_at", "created", "id"]);
+    app.recordQuery(collection).andWhere($dbx.exp(clauses.join(" AND "), params))
+        .orderBy(...order).limit(25).offset((pageNumber - 1) * 25).all(rows);
     return {
-        items: app
-            .findRecordsByFilter(
-                collection,
-                clauses.join(" && "),
-                "-occurred_at,-created,-id",
-                25,
-                (pageNumber - 1) * 25,
-                params,
-            )
-            .map(mapper || ((r) => collection === "circle_expenses" ? configuration.projectCategory(app, r) : r.publicExport())),
+        items: rows.map(mapper || ((r) => collection === "circle_expenses" ? configuration.projectCategory(app, r) : r.publicExport())),
         page: pageNumber,
         totalItems: total,
         totalPages: Math.max(1, Math.ceil(total / 25)),
@@ -724,11 +727,11 @@ function saveExpense(e) {
                 throw new BadRequestError(String(error.message || error));
             }
 
+            const kind = configuration.categoryKind(data.kind === undefined && expense ? expense.getString("kind") : data.kind);
             const receipt = data.receipt === undefined ? (expense ? JSON.parse(expense.getString("receipt") || "null") : null) : data.receipt;
             if (receipt !== null) {
                 try {
                     const calculation = require(`${__hooks}/receipt-core.cjs`).calculate(receipt);
-                    const kind = data.kind === undefined ? (expense ? expense.getString("kind") : "expense") : data.kind;
                     if (kind !== "expense" || data.split_mode !== "exact" || total !== calculation.amount || shares.length !== calculation.shares.length || shares.some((share) => !calculation.shares.some((expected) => expected.member === share.member && expected.amount === share.amount)))
                         throw new Error("Receipt totals and exact shares must match the calculated expense.");
                     // Check every assigned member, even when their rounded share is zero.
@@ -739,24 +742,28 @@ function saveExpense(e) {
             }
 
             shares.forEach((share) => memberInCircle(members, share.member, formerAllowed));
+            const shortcut = !expense && e.request.header.get("X-Expenditure-Source") === "shortcut";
+            const title = text(data.title, "Title", 160, true);
+            const walletTap = shortcut && e.request.header.get("X-Expenditure-Wallet-Tap") === "1";
+            const payment = text(data.payment_method, "Payment method", 80, false);
             const fields = {
                 circle: circle.id,
-                kind: data.kind === undefined ? (expense ? expense.getString("kind") : "expense") : data.kind,
+                kind,
                 recurrence: data.recurrence === undefined ? (expense ? expense.getString("recurrence") : "") : data.recurrence,
                 recurrence_interval: data.recurrence_interval === undefined ? (expense ? expense.getInt("recurrence_interval") : 0) : data.recurrence_interval,
                 recurrence_day: data.recurrence_day === undefined ? (expense ? expense.getInt("recurrence_day") : 0) : data.recurrence_day,
                 recurrence_weekdays: data.recurrence_weekdays === undefined ? (expense ? (JSON.parse(expense.getString("recurrence_weekdays") || "[]") || []) : []) : data.recurrence_weekdays,
                 recurrence_month: data.recurrence_month === undefined ? (expense ? expense.getInt("recurrence_month") : 0) : data.recurrence_month,
-                title: text(data.title, "Title", 160, true),
-                category: require(`${__hooks}/circle-categories.js`).select(app, circle.id, data.category, expense),
-                source: expense ? expense.getString("source") : "manual",
+                title: walletTap ? require(`${__hooks}/shortcut-wallet.js`).resolve(app, e.auth.id, title) : title,
+                category: require(`${__hooks}/circle-categories.js`).select(app, circle.id, data.category, expense, kind),
+                source: expense ? expense.getString("source") : shortcut ? "shortcut" : "manual",
                 amount: total,
                 currency: code,
                 paid_by: data.paid_by,
                 split_mode: data.split_mode,
                 shares,
                 receipt,
-                payment_method: text(data.payment_method, "Payment method", 80, false),
+                payment_method: shortcut ? require(`${__hooks}/shortcut-payments.js`).resolve(app, e.auth.id, payment) : payment,
                 notes: text(data.notes, "Notes", 2000, false),
                 occurred_at: occurredAt(data.occurred_at),
                 version: expense ? expense.getInt("version") + 1 : 1,
@@ -901,7 +908,7 @@ function deleteContents(app, circle) {
 }
 
 module.exports = {
-    access, requireExpensePermission, memberRecords, memberInCircle, balances, preserveFormerBalances,
+    access, permissions, requireExpensePermission, memberRecords, memberInCircle, balances, preserveFormerBalances,
     updateMemberPermissions,
     list,
     create,

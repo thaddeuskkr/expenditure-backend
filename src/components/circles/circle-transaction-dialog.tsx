@@ -41,6 +41,7 @@ export function CircleTransactionDialog({ transaction, onClose, onOpenCircle }: 
                         <span className="rounded-md border px-2 py-1 wrap-anywhere">{categoryLabel(transaction)}</span>
                         {transaction.recurrence && <span className="rounded-md bg-white/4 px-2 py-1 wrap-anywhere">{recurrenceLabel(transaction)}</span>}
                         {transaction.source === "api" && <span className="flex items-center gap-1.5 px-1 py-1"><Code2 aria-hidden="true" className="size-3" />Via API</span>}
+                        {transaction.source === "shortcut" && <span className="flex items-center gap-1.5 px-1 py-1"><Code2 aria-hidden="true" className="size-3" />Via Shortcut</span>}
                     </div>
                 </DialogHeader>
                 <dl className="grid gap-4 border-y py-4 sm:grid-cols-2">

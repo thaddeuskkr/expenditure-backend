@@ -1,4 +1,6 @@
 function list(app, user, query) {
+    const sorting = require(`${__hooks}/ledger-sort.js`);
+    const sort = sorting.parse(query, "sort");
     const config = require(`${__hooks}/configuration.js`);
     const timestamp = require(`${__hooks}/request.js`).timestamp;
     const from = timestamp(query.get("from")).replace("T", " ");
@@ -19,7 +21,7 @@ function list(app, user, query) {
     if (currency !== "all" && !config.currency(currency)) throw new BadRequestError("Unsupported currency.");
     if ((category !== "all" && category !== "unmapped" && !/^[a-z0-9]{15}$/.test(category)) || search.length > 200) throw new BadRequestError("The category or search is too long.");
     const params = { user, from, to, currency, category: category === "unmapped" ? "" : category, search, limit: perPage, offset: (page - 1) * perPage };
-    let sql = `SELECT id, 'expenses' AS collection, occurred_at, created, 0 AS allocated_amount,
+    let sql = `SELECT id, 'expenses' AS collection, occurred_at, created, amount AS sort_amount, currency AS sort_currency, 0 AS allocated_amount,
                       '' AS circle, '' AS circle_name, '' AS circle_icon, 0 AS membership_active
                FROM expenses
                WHERE user = {:user} AND moved_to = '' AND occurred_at >= {:from} AND occurred_at < {:to}
@@ -40,7 +42,7 @@ function list(app, user, query) {
         }
 
         sql += ` UNION ALL
-            SELECT shared.id, 'circle_expenses' AS collection, shared.occurred_at, shared.created,
+            SELECT shared.id, 'circle_expenses' AS collection, shared.occurred_at, shared.created, json_extract(allocation.value, '$.amount') AS sort_amount, shared.currency AS sort_currency,
                    json_extract(allocation.value, '$.amount') AS allocated_amount,
                    shared.circle, circles.name AS circle_name, circles.icon AS circle_icon, membership.active AS membership_active
             FROM circle_members membership
@@ -56,8 +58,9 @@ function list(app, user, query) {
 
     const count = new DynamicModel({ total: 0 });
     app.db().newQuery(`SELECT COUNT(*) AS total FROM (${sql})`).bind(params).one(count);
-    const rows = arrayOf(new DynamicModel({ id: "", collection: "", occurred_at: "", created: "", allocated_amount: 0, circle: "", circle_name: "", circle_icon: "", membership_active: 0 }));
-    app.db().newQuery(`${sql} ORDER BY occurred_at DESC, created DESC, collection DESC, id DESC LIMIT {:limit} OFFSET {:offset}`).bind(params).all(rows);
+    const rows = arrayOf(new DynamicModel({ id: "", collection: "", occurred_at: "", created: "", sort_amount: 0, sort_currency: "", allocated_amount: 0, circle: "", circle_name: "", circle_icon: "", membership_active: 0 }));
+    const order = sorting.order(sort, "sort_amount", "sort_currency", ["occurred_at", "created", "collection", "id"]).join(", ");
+    app.db().newQuery(`SELECT * FROM (${sql}) ORDER BY ${order} LIMIT {:limit} OFFSET {:offset}`).bind(params).all(rows);
     return {
         page, perPage, totalItems: count.total, totalPages: Math.ceil(count.total / perPage),
         items: rows.map((row) => {

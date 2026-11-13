@@ -10,6 +10,7 @@ const defaultNames = [
     "Health",
     "Other",
 ];
+const incomeNames = ["Salary", "Other"];
 const colors = [
     "#d6b4d5",
     "#b5baff",
@@ -45,21 +46,26 @@ function preferences(app, user) {
     return found[0].publicExport();
 }
 
-function categories(app, user) {
+function categoryKind(value = "expense") {
+    if (value !== "expense" && value !== "income") throw new BadRequestError("Choose expense or income.");
+    return value;
+}
+
+function categories(app, user, kind) {
     const records = app.findRecordsByFilter(
         "categories",
         "user = {:user}",
-        "sort_order,created,name,id",
+        "kind,sort_order,created,name,id",
         0,
         0,
         { user },
     );
     if (!records.length) {
         initialize(app, user);
-        return categories(app, user);
+        return categories(app, user, kind);
     }
 
-    return records.map((record) => record.publicExport());
+    return records.map((record) => record.publicExport()).filter((row) => kind === undefined || row.kind === kind);
 }
 
 function initialize(app, user) {
@@ -70,30 +76,27 @@ function initialize(app, user) {
             tx.save(record);
         }
 
-        if (tx.countRecords("categories", $dbx.hashExp({ user })) > 0) return;
-        defaultNames.forEach((name, i) => {
-            const record = new Record(tx.findCollectionByNameOrId("categories"));
-            record.load({
-                user,
-                name,
-                color: colors[i % colors.length],
-                active: true,
-                sort_order: i,
+        const collection = tx.findCollectionByNameOrId("categories");
+        for (const [kind, names] of [["expense", defaultNames], ["income", incomeNames]]) {
+            if (tx.countRecords("categories", $dbx.hashExp({ user, kind })) > 0) continue;
+            names.forEach((name, index) => {
+                const record = new Record(collection);
+                record.load({ user, kind, name, color: colors[index], active: true, sort_order: index });
+                tx.save(record);
             });
-            tx.save(record);
-        });
+        }
     });
 }
 
-function category(app, user, id, allowArchived) {
-    const match = categories(app, user).find((item) => item.id === id);
+function category(app, user, id, allowArchived, kind = "expense") {
+    const match = categories(app, user, kind).find((item) => item.id === id);
     if (!match || (!match.active && !allowArchived))
         throw new BadRequestError("Choose an active category from your account.");
     return match.id;
 }
 
 function categoryByName(app, user, name) {
-    const match = categories(app, user).find((item) => item.name.toLowerCase() === name.toLowerCase());
+    const match = categories(app, user, "expense").find((item) => item.name.toLowerCase() === name.toLowerCase());
     if (!match || !match.active) throw new BadRequestError("Choose an active category from your account.");
     return match;
 }
@@ -112,13 +115,15 @@ function projectCategory(app, record) {
 function personalCategoryMapper(app, user) {
     const personal = categories(app, user);
     const key = (name) => name.trim().replace(/\s+/g, " ").toLowerCase();
-    const other = personal.find((item) => key(item.name) === "other");
     const cached = Object.create(null);
     return (circleCategory) => {
         if (Object.prototype.hasOwnProperty.call(cached, circleCategory)) return cached[circleCategory];
-        const name = app.findRecordById("circle_categories", circleCategory).getString("name");
-        const exact = personal.find((item) => item.name === name);
-        const matches = exact ? [exact] : personal.filter((item) => key(item.name) === key(name));
+        const shared = app.findRecordById("circle_categories", circleCategory);
+        const name = shared.getString("name");
+        const matchingKind = personal.filter((item) => item.kind === shared.getString("kind"));
+        const exact = matchingKind.find((item) => item.name === name);
+        const matches = exact ? [exact] : matchingKind.filter((item) => key(item.name) === key(name));
+        const other = matchingKind.find((item) => key(item.name) === "other");
         cached[circleCategory] = matches.length === 1 ? matches[0].id : other?.id || "";
         return cached[circleCategory];
     };
@@ -161,6 +166,7 @@ function validate(record, app) {
         if (keys.some((key, index) => keys.indexOf(key) !== index))
             throw new BadRequestError("Payment method names must be unique.");
         record.set("payment_methods", cleaned);
+        require(`${__hooks}/shortcut-payments.js`).validate(record, cleaned);
         const circle = record.getString("default_api_circle");
         if (circle && (record.isNew() || circle !== record.original().getString("default_api_circle"))) {
             try {
@@ -183,7 +189,8 @@ function validate(record, app) {
                 throw new BadRequestError("Choose an enabled currency for new transactions.");
         }
 
-        ["default_expense_category", "default_income_category"].forEach((field) => {
+        ["expense", "income"].forEach((kind) => {
+            const field = `default_${kind}_category`;
             const id = record.getString(field);
             if (!id) return;
             let category;
@@ -193,7 +200,7 @@ function validate(record, app) {
                 throw new BadRequestError("Choose an active category from your account for new transactions.");
             }
 
-            if (category.getString("user") !== user || !category.getBool("active"))
+            if (category.getString("user") !== user || category.getString("kind") !== kind || !category.getBool("active"))
                 throw new BadRequestError("Choose an active category from your account for new transactions.");
         });
     } else {
@@ -206,7 +213,7 @@ function validate(record, app) {
         const sameCategory =
             !record.isNew() && selected === original.getString("category");
         if (!(name === "budgets" && selected === ""))
-            record.set("category", category(app, user, selected, sameCategory));
+            record.set("category", category(app, user, selected, sameCategory, name === "budgets" ? "expense" : record.getString("kind")));
     }
 }
 
@@ -233,6 +240,7 @@ function deletePersonalContents(app, user) {
 
 module.exports = {
     defaultNames,
+    incomeNames,
     colors,
     catalog,
     currency,
@@ -240,6 +248,7 @@ module.exports = {
     categories,
     initialize,
     category,
+    categoryKind,
     categoryByName,
     projectCategory,
     deletePersonalContents,

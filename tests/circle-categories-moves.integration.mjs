@@ -140,15 +140,16 @@ test(
         let historical, shared;
         await t.test("categories are Circle-local, owner-managed and validated", async () => {
             const initial = await detail();
-            assert.equal(initial.categories.length, 8);
-            assert.ok(initial.categories.every((row, index) => row.sort_order === index));
+            assert.equal(initial.categories.filter((row) => row.kind === "expense").length, 8);
+            for (const kind of ["expense", "income"])
+                assert.ok(initial.categories.filter((row) => row.kind === kind).every((row, index) => row.sort_order === index));
             await api("/api/collections/circle_categories/records", bob.token, undefined, "GET", 403);
             await api(categoryPath, bob.token, { name: "Not owner", color: "#123456" }, "POST", 403);
             await api(categoryPath, outsider.token, { name: "Outside", color: "#123456" }, "POST", 404);
             historical = await api(categoryPath, alice.token, { name: "Trip only", color: "#123456" }, "POST", 201);
             await api(categoryPath, alice.token, { name: "TRIP ONLY", color: "#123456" }, "POST", 400);
             for (const body of [{ name: "All", color: "#123456" }, { name: "Valid", color: "invalid" }, { name: "Valid", color: "#123456", user: bob.id }]) await api(categoryPath, alice.token, body, "POST", 400);
-            assert.equal((await api(`${root}/${otherCircle.id}`, alice.token)).categories.length, 8);
+            assert.equal((await api(`${root}/${otherCircle.id}`, alice.token)).categories.filter((row) => row.kind === "expense").length, 8);
             shared = await api(`${root}/${circle.id}/expenses`, bob.token, { title: "Shared lunch", kind: "expense", amount: 99, currency: "SGD", category: historical.name, paid_by: bobMember, split_mode: "even", shares: [{ member: bobMember }], occurred_at: personalData.occurred_at }, "POST", 201);
             const renamed = await api(`${categoryPath}/${historical.id}`, alice.token, { name: "Trip history", color: "#abcdef" }, "PATCH");
             historical = renamed;
@@ -164,9 +165,9 @@ test(
             shared = entry;
             shared = await api(`${root}/${circle.id}/expenses/${entry.id}`, bob.token, { title: entry.title, kind: entry.kind, amount: entry.amount, currency: entry.currency, category: entry.category, paid_by: entry.paid_by, split_mode: "even", shares: [{ member: bobMember }], occurred_at: personalData.occurred_at, version: entry.version }, "PATCH");
             current = await detail();
-            const previous_ids = current.categories.map((row) => row.id), ids = previous_ids.slice().reverse();
+            const previous_ids = current.categories.filter((row) => row.kind === "expense").map((row) => row.id), ids = previous_ids.slice().reverse();
             await api(`${categoryPath}/reorder`, alice.token, { ids, previous_ids });
-            assert.deepEqual((await detail()).categories.map((row) => row.id), ids);
+            assert.deepEqual((await detail()).categories.filter((row) => row.kind === "expense").map((row) => row.id), ids);
             await api(`${categoryPath}/reorder`, alice.token, { ids: previous_ids, previous_ids }, "POST", 409);
             await api(`${categoryPath}/reorder`, bob.token, { ids: previous_ids, previous_ids: ids }, "POST", 403);
         });
@@ -178,12 +179,12 @@ test(
             await api(`/api/expenditure/categories/${ownerExtra.id}`, alice.token, { active: false }, "PATCH");
             config = await api("/api/expenditure/config", alice.token);
             const before = await detail();
-            const previous_ids = before.categories.map((row) => row.id);
+            const previous_ids = before.categories.filter((row) => row.kind === "expense").map((row) => row.id);
             await api(`${categoryPath}/copy`, bob.token, { previous_ids }, "POST", 403);
             await api(`${categoryPath}/copy`, alice.token, { previous_ids, user: bob.id }, "POST", 400);
             await api(`${categoryPath}/copy`, alice.token, { previous_ids: previous_ids.slice().reverse() }, "POST", 409);
             const copied = (await api(`${categoryPath}/copy`, alice.token, { previous_ids })).items;
-            assert.deepEqual(copied.slice(0, config.categories.length).map(({ name, color, active }) => ({ name, color, active })), config.categories.map(({ name, color, active }) => ({ name, color, active })));
+            assert.deepEqual(copied.slice(0, config.categories.filter((row) => row.kind === "expense").length).map(({ name, color, active }) => ({ name, color, active })), config.categories.filter((row) => row.kind === "expense").map(({ name, color, active }) => ({ name, color, active })));
             assert.equal(copied.at(-1).id, historical.id);
             assert.equal(copied.at(-1).active, false);
             assert.ok(!copied.some((row) => row.name === "Other"));
@@ -198,7 +199,7 @@ test(
             await api(`${categoryPath}/${active[0].id}`, alice.token, { active: false }, "PATCH", 400);
         });
         let moved;
-        const activeCategory = () => detail().then((result) => result.categories.find((row) => row.active).name);
+        const activeCategory = () => detail().then((result) => result.categories.find((row) => row.kind === "expense" && row.active).name);
         await t.test("members can move only their own expenses and receive the entire initial share", async () => {
             const query = new URLSearchParams({ from: "2026-10-01T00:00:00Z", to: "2026-11-01T00:00:00Z", previous: "2026-09-01T00:00:00Z", currency: "all" });
             const baseline = await api(`/api/expenditure/overview?${query}`, bob.token);
@@ -306,7 +307,7 @@ test(
             const own = await api(personal, bob.token, personalData);
             await api(`${root}/${circle.id}/members/${bobMember}`, alice.token, undefined, "DELETE");
             await api(`${root}/${circle.id}/expenses/move`, bob.token, { expense: own.id, previous_updated: own.updated, category: "Food & drinks" }, "POST", 404);
-            await api(`${categoryPath}/copy`, bob.token, { previous_ids: (await detail()).categories.map((row) => row.id) }, "POST", 404);
+            await api(`${categoryPath}/copy`, bob.token, { previous_ids: (await detail()).categories.filter((row) => row.kind === "expense").map((row) => row.id) }, "POST", 404);
             assert.equal((await api(`${personal}/${own.id}`, bob.token)).id, own.id);
         });
     },

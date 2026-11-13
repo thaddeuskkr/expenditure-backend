@@ -46,5 +46,53 @@
       "text": "#EEF0FA",
       "muted": "#B1B9D2"
     }
+  },
+  {
+    "id": "onyx",
+    "name": "Onyx & Silver",
+    "colors": {
+      "background": "#000000",
+      "surface": "#121212",
+      "raised": "#252525",
+      "accent": "#D7DCE2",
+      "text": "#F5F5F5",
+      "muted": "#B8BDC5"
+    }
+  },
+  {
+    "id": "coral",
+    "name": "Slate & Coral",
+    "colors": {
+      "background": "#1E1C22",
+      "surface": "#2C2831",
+      "raised": "#403945",
+      "accent": "#FFB4A5",
+      "text": "#F8EFF2",
+      "muted": "#C9BAC4"
+    }
+  },
+  {
+    "id": "porcelain",
+    "name": "Porcelain & Cobalt",
+    "colors": {
+      "background": "#F7F9FD",
+      "surface": "#FFFFFF",
+      "raised": "#E4EAF5",
+      "accent": "#244FC0",
+      "text": "#19243B",
+      "muted": "#4C5B75"
+    }
+  },
+  {
+    "id": "sand",
+    "name": "Sand & Copper",
+    "colors": {
+      "background": "#F8F2E9",
+      "surface": "#FFFCF7",
+      "raised": "#EAE0D2",
+      "accent": "#884628",
+      "text": "#30251F",
+      "muted": "#685447"
+    }
   }
 ]
