@@ -1,5 +1,5 @@
-# Expenditure backend
+# Expenditure - Backend
 
-Self-hosted PocketBase backend for Expenditure on iOS and its Apple Shortcuts actions.
-
-Follow the [PocketBase setup instructions](pocketbase/README.md) to install or upgrade the backend. See the [push relay setup](pocketbase/push-relay/README.md) to enable activity notifications.
+> [!CAUTION]
+> The code for the backend has been moved to the [main Expenditure monorepo](https://github.com/thaddeuskkr/expenditure).  
+> Please use that repository instead.
